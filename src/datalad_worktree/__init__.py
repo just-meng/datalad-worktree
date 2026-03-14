@@ -1,6 +1,6 @@
 """DataLad extension for creating nested git worktrees across dataset hierarchies."""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 # DataLad extension registration
 # This tuple tells datalad where to find the command suite:
