@@ -4,32 +4,37 @@ Create nested git worktrees for [DataLad](https://www.datalad.org/) dataset hier
 
 When working with DataLad superdatasets that contain nested subdatasets, you sometimes need to work on a feature branch across the entire hierarchy. Manually creating `git worktree` for each dataset is tedious and error-prone. This tool automates that: point it at a superdataset, give it a branch name, and it mirrors the entire nested structure under a new worktree root.
 
+**Python 3.11+, no runtime dependencies** (DataLad optional for enhanced discovery).
+
 ## Installation
 
+As a DataLad extension (recommended):
+
 ```bash
-pip install datalad-worktree
+uv tool install datalad \
+  --with-editable ~/repos/datalad-worktree \
+
 ```
 
-Or with [uv](https://docs.astral.sh/uv/):
+Standalone:
 
 ```bash
-uv pip install datalad-worktree
+uv tool install -e /path/to/datalad-worktree
 ```
 
 For development:
 
 ```bash
-git clone https://github.com/youruser/datalad-worktree.git
 cd datalad-worktree
 uv venv && source .venv/bin/activate
-uv pip install -e .
+uv pip install -e ".[dev]"
 ```
 
 ## Quick Start
 
 ```bash
 cd /data/my-superdataset
-datalad-worktree /tmp/worktrees my-feature feature/new-analysis
+worktree /tmp/worktrees/my-feature feature/new-analysis
 ```
 
 This discovers all subdatasets, then creates:
@@ -51,25 +56,25 @@ Each directory is a proper git worktree checked out on `feature/new-analysis`. I
 
 ```bash
 # Basic usage (run from superdataset root)
-datalad-worktree <worktree-location> <worktree-name> <branch-name>
+worktree <worktree-path> <branch>
 
 # Dry run -- see what would happen without changing anything
-datalad-worktree --dry-run /tmp/wt experiment1 dev/experiment
+worktree --dry-run /tmp/wt dev/experiment
 
 # Verbose output
-datalad-worktree -v /tmp/wt my-feature feature/x
+worktree -v /tmp/wt feature/x
 
 # Force overwrite existing worktrees
-datalad-worktree --force /tmp/wt my-feature feature/x
+worktree --force /tmp/wt feature/x
 
 # Only checkout existing branches, don't create new ones
-datalad-worktree --no-create-branch /tmp/wt hotfix release/1.0
+worktree --no-create-branch /tmp/wt release/1.0
 
 # Specify superdataset path explicitly (instead of using cwd)
-datalad-worktree -d /data/my-superdataset /tmp/wt my-feature feature/x
+worktree -d /data/my-superdataset /tmp/wt feature/x
 
 # Skip DataLad API, use .gitmodules parsing only
-datalad-worktree --no-datalad /tmp/wt my-feature feature/x
+worktree --no-datalad /tmp/wt feature/x
 ```
 
 ### DataLad Command
@@ -77,8 +82,8 @@ datalad-worktree --no-datalad /tmp/wt my-feature feature/x
 If DataLad is installed, the tool registers as a DataLad extension:
 
 ```bash
-datalad worktree-create /tmp/wt my-feature feature/new-analysis
-datalad worktree-create -d /data/my-superdataset /tmp/wt exp1 dev/exp
+datalad worktree /tmp/wt feature/new-analysis
+datalad worktree -d /data/my-superdataset /tmp/wt dev/exp
 ```
 
 ### Python API
@@ -89,8 +94,7 @@ from datalad_worktree.core import create_nested_worktrees
 
 result = create_nested_worktrees(
     superds_path=Path("/data/my-superdataset"),
-    worktree_location=Path("/tmp/worktrees"),
-    worktree_name="my-feature",
+    worktree_path=Path("/tmp/worktrees/my-feature"),
     branch="feature/new-analysis",
 )
 
@@ -106,19 +110,18 @@ else:
 ### As a Python Module
 
 ```bash
-python -m datalad_worktree /tmp/wt my-feature feature/x
+python -m datalad_worktree /tmp/wt feature/x
 ```
 
 ## CLI Reference
 
 ```
-usage: datalad-worktree [-h] [-n] [-f] [-v] [--no-create-branch]
-                        [--no-datalad] [-d DATASET] [--no-color]
-                        worktree_location worktree_name branch
+usage: worktree [-h] [-n] [-f] [-v] [--no-create-branch]
+                [--no-datalad] [-d DATASET] [--no-color]
+                worktree_path branch
 
 positional arguments:
-  worktree_location     Parent directory where the worktree will be created
-  worktree_name         Name of the worktree directory
+  worktree_path         Path for the superdataset worktree
   branch                Branch name to create/checkout in every worktree
 
 options:
@@ -157,9 +160,9 @@ Both strategies return subdatasets sorted by path depth, ensuring parent dataset
 
 ## Requirements
 
-- Python >= 3.8
+- Python >= 3.11
 - git (on PATH)
-- [DataLad](https://www.datalad.org/) (optional but recommended; enables robust discovery and `datalad worktree-create` command)
+- [DataLad](https://www.datalad.org/) (optional but recommended; enables robust discovery and `datalad worktree` command)
 
 ## License
 
