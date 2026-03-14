@@ -47,23 +47,27 @@ try:
                 default_result_renderer(res)
                 return
             status = res.get("status", "")
-            path = res.get("path", "")
+            dest = res.get("path", "")
             source = res.get("source", "")
-            msg = res.get("message", "")
+            dataset_path = res.get("dataset_path", "")
+            label = dataset_path or "superdataset"
             if status == "ok":
-                ui.message("{}: {} -> {}".format(
+                extra = ""
+                if res.get("new_branch"):
+                    extra = ac.color_word(" (new branch)", ac.YELLOW)
+                ui.message("{} {} -> {}{}".format(
                     ac.color_word("create", ac.GREEN),
-                    source, path,
+                    label, dest, extra,
                 ))
             elif status == "notneeded":
-                ui.message("{}: {}".format(
+                ui.message("{}   {} -> {}".format(
                     ac.color_word("skip", ac.YELLOW),
-                    msg or path,
+                    label, dest,
                 ))
             else:
-                ui.message("{}: {}".format(
+                ui.message("{} {}: {}".format(
                     ac.color_word("error", ac.RED),
-                    msg or path,
+                    label, res.get("message", ""),
                 ))
 
         _params_ = dict(
@@ -164,7 +168,9 @@ try:
                     status=status,
                     message=report.message,
                     source=str(report.source),
+                    dataset_path=report.dataset_path,
                     branch=report.branch,
+                    new_branch=report.result == WorktreeResult.CREATED_NEW_BRANCH,
                     type="dataset",
                 )
 
