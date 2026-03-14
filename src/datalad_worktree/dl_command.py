@@ -15,13 +15,13 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 try:
+    import datalad.support.ansi_colors as ac
     from datalad.interface.base import Interface, build_doc
     from datalad.interface.results import get_status_dict
-    from datalad.interface.utils import default_result_renderer
+    from datalad.interface.utils import default_result_renderer, eval_results
     from datalad.support.constraints import EnsureNone, EnsureStr
     from datalad.support.param import Parameter
     from datalad.ui import ui
-    import datalad.support.ansi_colors as ac
 
     @build_doc
     class WorktreeCreate(Interface):
@@ -109,6 +109,7 @@ try:
         )
 
         @staticmethod
+        @eval_results
         def __call__(
             worktree_path,
             branch,
