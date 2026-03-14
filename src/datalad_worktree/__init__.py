@@ -11,7 +11,7 @@ command_suite = (
         (
             "datalad_worktree.dl_command",
             "WorktreeCreate",
-            "worktree-create",
+            "worktree",
         ),
     ],
 )

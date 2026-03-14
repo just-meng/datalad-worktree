@@ -7,22 +7,23 @@ name = "datalad-worktree"
 version = "0.1.0"
 description = "Create nested git worktrees for DataLad datasets"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = "MIT"
-dependencies = [
-    "datalad",
+authors = [
+    { name = "Jiameng Wu", email = "jiameng.wu@gmail.com" },
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest",
-]
+dev = ["pytest>=7"]
 
 [project.scripts]
-datalad-worktree = "datalad_worktree.cli:main"
+worktree = "datalad_worktree.cli:main"
 
 [project.entry-points."datalad.extensions"]
 worktree = "datalad_worktree:command_suite"
 
 [tool.hatch.build.targets.wheel]
-packages = ["datalad_worktree"]
+packages = ["src/datalad_worktree"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,8 +1,8 @@
 """
-DataLad command interface for worktree-create.
+DataLad command interface for worktree.
 
 This allows calling the tool as:
-  datalad worktree-create <location> <name> <branch>
+  datalad worktree <worktree-path> <branch>
 
 Requires DataLad to be installed.
 """
@@ -32,10 +32,10 @@ try:
         Examples::
 
             # Create worktrees under /tmp/wt/my-feature on branch 'feature/x'
-            datalad worktree-create /tmp/wt my-feature feature/x
+            datalad worktree /tmp/wt feature/x
 
             # Dry run
-            datalad worktree-create --dry-run /tmp/wt experiment1 dev/experiment
+            datalad worktree --dry-run /tmp/wt dev/experiment
         """
 
         _params_ = dict(
@@ -129,7 +129,7 @@ try:
                     status = "error"
 
                 yield get_status_dict(
-                    action="worktree-create",
+                    action="worktree",
                     ds=ds,
                     path=str(report.destination),
                     status=status,
@@ -141,7 +141,7 @@ try:
 
 except ImportError:
     logger.debug(
-        "DataLad not available; datalad worktree-create command not registered"
+        "DataLad not available; datalad worktree command not registered"
     )
 
     class WorktreeCreate:
@@ -149,5 +149,5 @@ except ImportError:
 
         def __call__(self, *args, **kwargs):
             raise RuntimeError(
-                "DataLad is not installed. Use the standalone CLI: datalad-worktree"
+                "DataLad is not installed. Use the standalone CLI: worktree"
             )

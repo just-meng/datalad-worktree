@@ -2,7 +2,7 @@
 Command-line interface for datalad-worktree.
 
 Can be invoked as:
-  - ``datalad-worktree <worktree-path> <branch>``
+  - ``worktree <worktree-path> <branch>``
   - ``python -m datalad_worktree <worktree-path> <branch>``
 """
 
@@ -53,7 +53,7 @@ def _error(msg: str) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="datalad-worktree",
+        prog="worktree",
         description=(
             "Create nested git worktrees for DataLad dataset hierarchies.\n\n"
             "Run from the root of a DataLad superdataset. This tool discovers\n"
