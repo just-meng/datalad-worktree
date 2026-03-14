@@ -17,8 +17,11 @@ logger = logging.getLogger(__name__)
 try:
     from datalad.interface.base import Interface, build_doc
     from datalad.interface.results import get_status_dict
+    from datalad.interface.utils import default_result_renderer
     from datalad.support.constraints import EnsureNone, EnsureStr
     from datalad.support.param import Parameter
+    from datalad.ui import ui
+    import datalad.support.ansi_colors as ac
 
     @build_doc
     class WorktreeCreate(Interface):
@@ -37,6 +40,31 @@ try:
             # Dry run
             datalad worktree --dry-run /tmp/wt dev/experiment
         """
+
+        @staticmethod
+        def custom_result_renderer(res, **kwargs):
+            if res["action"] != "worktree":
+                default_result_renderer(res)
+                return
+            status = res.get("status", "")
+            path = res.get("path", "")
+            source = res.get("source", "")
+            msg = res.get("message", "")
+            if status == "ok":
+                ui.message("{}: {} -> {}".format(
+                    ac.color_word("create", ac.GREEN),
+                    source, path,
+                ))
+            elif status == "notneeded":
+                ui.message("{}: {}".format(
+                    ac.color_word("skip", ac.YELLOW),
+                    msg or path,
+                ))
+            else:
+                ui.message("{}: {}".format(
+                    ac.color_word("error", ac.RED),
+                    msg or path,
+                ))
 
         _params_ = dict(
             worktree_path=Parameter(
