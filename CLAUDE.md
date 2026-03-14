@@ -13,13 +13,14 @@ datalad-worktree/
 ├── pyproject.toml         # Build config, dependencies, entry points
 ├── README.md              # User-facing documentation
 ├── CLAUDE.md              # This file
-└── datalad_worktree/
-    ├── __init__.py        # Package init + DataLad extension registration (command_suite)
-    ├── __main__.py        # Entry point for `python -m datalad_worktree`
-    ├── cli.py             # Standalone CLI (argparse, colored output)
-    ├── core.py            # Core logic: validation, worktree creation, result types
-    ├── discovery.py       # Subdataset discovery (DataLad API + .gitmodules fallback)
-    └── dl_command.py      # DataLad Interface subclass for `datalad worktree-create`
+└── src/
+    └── datalad_worktree/
+        ├── __init__.py    # Package init + DataLad extension registration (command_suite)
+        ├── __main__.py    # Entry point for `python -m datalad_worktree`
+        ├── cli.py         # Standalone CLI (argparse, colored output)
+        ├── core.py        # Core logic: validation, worktree creation, result types
+        ├── discovery.py   # Subdataset discovery (DataLad API + .gitmodules fallback)
+        └── dl_command.py  # DataLad Interface subclass for `datalad worktree`
 ```
 
 ## Build and Run
@@ -29,9 +30,9 @@ datalad-worktree/
 uv tool install -e .
 
 # Run (three equivalent entry points)
-datalad-worktree /tmp/wt name branch
-datalad worktree-create /tmp/wt name branch   # requires datalad
-python -m datalad_worktree /tmp/wt name branch
+worktree /tmp/wt branch
+datalad worktree /tmp/wt branch   # requires datalad
+python -m datalad_worktree /tmp/wt branch
 
 # Run tests
 uv run --extra dev pytest
@@ -97,6 +98,6 @@ uv run --extra dev pytest
 
 ## Dependencies
 
-- **Required**: Python >= 3.8, git on PATH
-- **Optional**: DataLad (enables API discovery and `datalad worktree-create` command)
+- **Required**: Python >= 3.11, git on PATH
+- **Optional**: DataLad (enables API discovery and `datalad worktree` command)
 - **No other Python runtime dependencies** beyond the standard library when running without DataLad
