@@ -8,18 +8,14 @@ When working with DataLad superdatasets that contain nested subdatasets, you som
 
 ## Installation
 
-As a DataLad extension (recommended):
+As a DataLad extension (recommended), alongside other extensions:
 
 ```bash
 uv tool install datalad \
-  --with-editable ~/repos/datalad-worktree \
-
-```
-
-Standalone:
-
-```bash
-uv tool install -e /path/to/datalad-worktree
+  --with datalad-next \
+  --with datalad-container \
+  --with ~/repos/datalad-worktree \
+  --force
 ```
 
 For development:
