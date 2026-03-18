@@ -22,8 +22,11 @@ For development:
 
 ```bash
 cd datalad-worktree
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+uv sync --extra dev
+
+# Run from any directory using local code
+uv run --project ~/path/to/datalad-worktree worktree list
+uv run --project ~/path/to/datalad-worktree datalad worktree-list
 ```
 
 ## Quick Start
@@ -56,89 +59,36 @@ Each directory is a proper git worktree checked out on `feature/new-analysis`. I
 
 ## Usage
 
+All commands are run from the superdataset root (or pass `-d <path>` to specify it).
+
 ### Standalone CLI
 
 ```bash
-# Create worktrees (run from superdataset root)
+# Create worktrees
 worktree add <worktree-path> <branch>
-
-# Dry run -- see what would happen without changing anything
 worktree add --dry-run /tmp/wt dev/experiment
-
-# Force overwrite existing worktrees
 worktree add --force /tmp/wt feature/x
-
-# Only checkout existing branches, don't create new ones
 worktree add --no-create-branch /tmp/wt release/1.0
 
-# Specify superdataset path explicitly (instead of using cwd)
-worktree add -d /data/my-superdataset /tmp/wt feature/x
-
-# List all worktrees across the hierarchy
+# List worktrees (grouped by branch)
 worktree list
-worktree list -d /data/my-superdataset
 
-# Remove worktrees by branch name (prompts for confirmation)
+# Remove worktrees (prompts for confirmation)
 worktree remove feature/x
-
-# Remove worktrees by path
 worktree remove /tmp/wt
-
-# Skip confirmation prompt
-worktree remove --yes feature/x
-
-# Remove worktrees and delete the branch
-worktree remove --delete-branch feature/x
-
-# Force removal (uncommitted changes + force-delete branch)
+worktree remove --yes feature/x              # skip prompt
+worktree remove --delete-branch feature/x    # also delete the branch
 worktree remove --force --delete-branch feature/x
 ```
 
 ### DataLad Commands
 
-If DataLad is installed, the tool registers as a DataLad extension with three commands:
+If DataLad is installed, the tool registers as a DataLad extension:
 
 ```bash
-# Create worktrees
 datalad worktree-add /tmp/wt feature/new-analysis
-datalad worktree-add --dry-run /tmp/wt dev/experiment
-
-# List worktrees
 datalad worktree-list
-datalad worktree-list -d /data/my-superdataset
-
-# Remove worktrees
 datalad worktree-remove feature/x
-datalad worktree-remove --delete-branch feature/x
-```
-
-### Python API
-
-```python
-from pathlib import Path
-from datalad_worktree.add import create_nested_worktrees
-from datalad_worktree.core import collect_worktree_reports
-
-worktree_path = Path("/tmp/worktrees/my-feature")
-branch = "feature/new-analysis"
-
-result = collect_worktree_reports(
-    create_nested_worktrees(
-        superds_path=Path("/data/my-superdataset"),
-        worktree_path=worktree_path,
-        branch=branch,
-    ),
-    worktree_root=worktree_path.resolve(),
-    branch=branch,
-)
-
-print(result.summary())
-```
-
-### As a Python Module
-
-```bash
-python -m datalad_worktree add /tmp/wt feature/x
 ```
 
 ## CLI Reference
@@ -149,20 +99,15 @@ python -m datalad_worktree add /tmp/wt feature/x
 worktree add [-h] [-n] [-f] [--no-create-branch] [-d DATASET]
              worktree_path branch
 
-  worktree_path             Path for the superdataset worktree
-  branch                    Branch name to create/checkout in every worktree
   -n, --dry-run             Show what would be done without doing it
   -f, --force               Pass --force to git worktree add
-  --no-create-branch        Don't create new branches; only checkout existing ones
-  -d, --dataset DATASET     Path to superdataset root (default: current directory)
+  --no-create-branch        Only checkout existing branches, don't create new ones
 ```
 
 ### `worktree list`
 
 ```
 worktree list [-h] [-d DATASET]
-
-  -d, --dataset DATASET     Path to superdataset root (default: current directory)
 ```
 
 ### `worktree remove`
@@ -170,39 +115,31 @@ worktree list [-h] [-d DATASET]
 ```
 worktree remove [-h] [--delete-branch] [-f] [-y] [-d DATASET] target
 
-  target                    Worktree path or branch name to remove
   --delete-branch           Also delete the branch (safe delete; refuses if unmerged)
   -f, --force               Force removal even with uncommitted changes; force-delete branch
   -y, --yes                 Skip confirmation prompt
-  -d, --dataset DATASET     Path to superdataset root (default: current directory)
 ```
 
 ## How It Works
 
 ### Add
 
-1. **Validate** that the current directory (or `--dataset` path) is a git repository root.
-2. **Discover** all subdatasets by recursively parsing `.gitmodules` files.
-3. **Pre-flight check**: verify that all worktrees can be created (no branch conflicts, no existing paths without `--force`). If any would fail, abort before creating anything.
-4. **Create the superdataset worktree** via `git worktree add`.
-5. **For each subdataset** (sorted by path so parents come before children):
-   - Clean up any gitlink file or placeholder directory left by the parent worktree at the subdataset mount point.
-   - Run `git worktree add` against the subdataset's original repository.
-6. **Report** results as each worktree is created, with a summary at the end.
+1. **Discover** all subdatasets by recursively parsing `.gitmodules` files.
+2. **Pre-flight check**: verify all worktrees can be created (no branch conflicts, no existing paths without `--force`). If any would fail, abort before creating anything.
+3. **Create worktrees** for the superdataset and each subdataset, with real-time progress.
 
 Subdatasets that are not installed (no `.git` present) are skipped. A failed subdataset does not abort the remaining ones.
+
+### List
+
+Shows worktrees grouped by branch. Main worktrees are listed first under the superdataset's branch, followed by each extra branch as a separate section.
 
 ### Remove
 
 1. **Resolve** which worktrees match the target (path or branch name).
 2. **Preview** the directories that will be deleted and ask for confirmation (`--yes` to skip).
-3. **Process datasets deepest-first** so children are removed before parents.
-4. **Remove each worktree** via `git worktree remove`, with a fallback for DataLad repos (delete + prune).
-5. Optionally **delete the branch** (`git branch -d`, or `-D` with `--force`).
-
-### List
-
-Shows all datasets that have additional worktrees beyond their main working directory, grouped by branch. Main worktrees are listed first under the superdataset's branch, followed by each extra branch as a separate section.
+3. **Remove** deepest-first so children are removed before parents. Falls back to manual deletion for DataLad repos where `git worktree remove` fails.
+4. Optionally **delete the branch** (`git branch -d`, or `-D` with `--force`).
 
 ## Requirements
 
