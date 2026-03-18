@@ -40,10 +40,21 @@ def _render_report(report: WorktreeReport) -> None:
     """Render a single worktree report to stdout."""
     label = report.dataset_path
     dest = report.destination
+    is_tty = sys.stdout.isatty()
 
-    if report.result == WorktreeResult.CREATED:
+    if report.result == WorktreeResult.STARTING:
+        if is_tty:
+            # Overwritable progress line
+            print(f"{C.DIM}  ...  {label}{C.NC}", end="\r", flush=True)
+        # Non-TTY: skip STARTING lines entirely (no partial output)
+    elif report.result == WorktreeResult.CREATED:
+        if is_tty:
+            # Clear the STARTING line
+            print("\033[2K", end="")
         print(f"{C.GREEN}create{C.NC} {label} -> {dest}")
     elif report.result == WorktreeResult.CREATED_NEW_BRANCH:
+        if is_tty:
+            print("\033[2K", end="")
         print(f"{C.GREEN}create{C.NC} {label} -> {dest} {C.YELLOW}(new branch){C.NC}")
     elif report.result == WorktreeResult.SKIPPED_DRY_RUN:
         print(f"{C.GREEN}create{C.NC} {C.DIM}[DRY-RUN]{C.NC} {label} -> {dest}")
@@ -58,6 +69,8 @@ def _render_report(report: WorktreeReport) -> None:
     elif report.result == WorktreeResult.REMOVED_BRANCH:
         print(f"{C.GREEN}remove{C.NC} {label} branch '{report.branch}'")
     elif report.result == WorktreeResult.FAILED:
+        if is_tty:
+            print("\033[2K", end="")
         print(f"{C.RED}error{C.NC}  {label}: {report.message}", file=sys.stderr)
 
 
@@ -170,8 +183,10 @@ def _cmd_add(args) -> int:
             force=args.force,
             dry_run=args.dry_run,
         ):
-            reports.append(report)
             _render_report(report)
+            if report.result == WorktreeResult.STARTING:
+                continue  # progress indicator, not a final result
+            reports.append(report)
             if report.result in (
                 WorktreeResult.CREATED,
                 WorktreeResult.CREATED_NEW_BRANCH,

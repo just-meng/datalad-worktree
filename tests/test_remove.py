@@ -24,7 +24,10 @@ def _create_worktrees(superds: dict, name: str, branch: str) -> Path:
         branch=branch,
     ))
     assert all(
-        r.result in (WorktreeResult.CREATED, WorktreeResult.CREATED_NEW_BRANCH)
+        r.result in (
+            WorktreeResult.CREATED, WorktreeResult.CREATED_NEW_BRANCH,
+            WorktreeResult.STARTING,
+        )
         for r in reports
     )
     return wt_path

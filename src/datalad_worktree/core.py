@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 class WorktreeResult(Enum):
     """Outcome of a single worktree operation."""
+    STARTING = auto()              # about to create/remove (progress indicator)
     CREATED = auto()
     CREATED_NEW_BRANCH = auto()
     SKIPPED_NOT_INSTALLED = auto()
@@ -95,7 +96,7 @@ def collect_worktree_reports(
 ) -> WorktreeCreateResult:
     """Collect an iterable of WorktreeReport into a WorktreeCreateResult."""
     result = WorktreeCreateResult(worktree_root=worktree_root, branch=branch)
-    result.reports = list(reports)
+    result.reports = [r for r in reports if r.result != WorktreeResult.STARTING]
     return result
 
 

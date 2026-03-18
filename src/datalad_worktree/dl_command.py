@@ -180,6 +180,14 @@ try:
                 force=force,
                 dry_run=dry_run,
             ):
+                if report.result == WorktreeResult.STARTING:
+                    # Progress indicator — render directly, don't yield
+                    # as a DataLad result (it's not a final state)
+                    ui.message("  ...  {}".format(
+                        report.dataset_path,
+                    ))
+                    continue
+
                 if report.result in (
                     WorktreeResult.CREATED,
                     WorktreeResult.CREATED_NEW_BRANCH,

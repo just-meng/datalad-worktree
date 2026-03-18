@@ -219,6 +219,14 @@ def create_nested_worktrees(
             branch=branch,
         )
     else:
+        yield WorktreeReport(
+            dataset_path=".",
+            source=superds_path,
+            destination=worktree_root,
+            result=WorktreeResult.STARTING,
+            branch=branch,
+        )
+
         worktree_root.parent.mkdir(parents=True, exist_ok=True)
 
         wt_result, wt_msg = _git_worktree_add(
@@ -275,6 +283,14 @@ def create_nested_worktrees(
                 branch=branch,
             )
             continue
+
+        yield WorktreeReport(
+            dataset_path=subds.rel_path,
+            source=subds.abs_path,
+            destination=dest_subds,
+            result=WorktreeResult.STARTING,
+            branch=branch,
+        )
 
         _prepare_destination(dest_subds)
 
