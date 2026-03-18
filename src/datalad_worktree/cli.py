@@ -202,6 +202,8 @@ def _cmd_add(args) -> int:
 
 
 def _cmd_list(args) -> int:
+    from collections import defaultdict
+
     from datalad_worktree.list_cmd import list_nested_worktrees
 
     superds_path = (args.dataset or Path.cwd()).resolve()
@@ -212,20 +214,56 @@ def _cmd_list(args) -> int:
         print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
         return 1
 
-    for ds_wt in results:
-        # Skip datasets with only the main worktree (the repo itself)
-        extra_worktrees = [w for w in ds_wt.worktrees if not w.bare]
-        if len(extra_worktrees) <= 1:
-            continue
+    # Only consider datasets that have extra worktrees
+    datasets_with_extras = [
+        ds_wt for ds_wt in results
+        if sum(1 for w in ds_wt.worktrees if not w.bare) > 1
+    ]
+    if not datasets_with_extras:
+        return 0
 
-        print(f"{C.GREEN}{ds_wt.dataset_path}{C.NC}")
-        for wt in extra_worktrees:
-            branch_str = wt.branch or f"{C.DIM}(detached){C.NC}"
-            # Mark the main worktree
-            if wt.path.resolve() == ds_wt.source.resolve():
-                print(f"  {wt.path} [{branch_str}] {C.DIM}(main){C.NC}")
+    # Collect entries grouped by branch
+    # main_group: entries for the main worktree of each dataset
+    # branch_groups: entries for each extra worktree branch
+    main_group: list[tuple[str, Path, str]] = []  # (dataset_path, wt_path, branch)
+    branch_groups: dict[str, list[tuple[str, Path]]] = defaultdict(list)
+    super_branch = None
+
+    for ds_wt in datasets_with_extras:
+        for wt in ds_wt.worktrees:
+            if wt.bare:
+                continue
+            is_main = wt.path.resolve() == ds_wt.source.resolve()
+            branch = wt.branch or "(detached)"
+            if is_main:
+                main_group.append((ds_wt.dataset_path, wt.path, branch))
+                if ds_wt.dataset_path == ".":
+                    super_branch = branch
             else:
-                print(f"  {wt.path} [{branch_str}]")
+                branch_groups[branch].append((ds_wt.dataset_path, wt.path))
+
+    # Determine column width for dataset paths
+    all_paths = [p for p, _, _ in main_group] + [
+        p for entries in branch_groups.values() for p, _ in entries
+    ]
+    col_width = max(len(p) for p in all_paths) + 2 if all_paths else 20
+
+    # Print main worktrees group
+    if main_group:
+        header = super_branch or "(unknown)"
+        print(f"{C.GREEN}{header}{C.NC}")
+        for ds_path, wt_path, branch in main_group:
+            annotation = ""
+            if branch != super_branch:
+                annotation = f" {C.DIM}({branch}){C.NC}"
+            print(f"  {ds_path:<{col_width}}{wt_path}{annotation}")
+
+    # Print extra branch groups
+    for branch in sorted(branch_groups):
+        print()
+        print(f"{C.GREEN}{branch}{C.NC}")
+        for ds_path, wt_path in branch_groups[branch]:
+            print(f"  {ds_path:<{col_width}}{wt_path}")
 
     return 0
 

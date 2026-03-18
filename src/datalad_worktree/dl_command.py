@@ -230,17 +230,61 @@ try:
 
         @staticmethod
         def custom_result_renderer(res, **kwargs):
+            # Grouped output is handled entirely by the summary renderer.
             if res["action"] != "worktree-list":
                 default_result_renderer(res)
-                return
-            label = res.get("dataset_path", ".")
-            wt_path = res.get("path", "")
-            branch = res.get("branch", "")
-            is_main = res.get("is_main", False)
 
-            branch_str = branch or "(detached)"
-            main_tag = ac.color_word(" (main)", ac.WHITE) if is_main else ""
-            ui.message("  {} [{}]{}".format(wt_path, branch_str, main_tag))
+        @staticmethod
+        def custom_result_summary_renderer(results):
+            from collections import defaultdict
+
+            main_group = []   # (dataset_path, wt_path, branch)
+            branch_groups = defaultdict(list)  # branch -> [(dataset_path, wt_path)]
+            super_branch = None
+
+            for res in results:
+                if res.get("action") != "worktree-list":
+                    continue
+                ds_path = res.get("dataset_path", ".")
+                wt_path = res.get("path", "")
+                branch = res.get("branch", "") or "(detached)"
+                is_main = res.get("is_main", False)
+
+                if is_main:
+                    main_group.append((ds_path, wt_path, branch))
+                    if ds_path == ".":
+                        super_branch = branch
+                else:
+                    branch_groups[branch].append((ds_path, wt_path))
+
+            if not main_group and not branch_groups:
+                return
+
+            all_paths = [p for p, _, _ in main_group] + [
+                p for entries in branch_groups.values() for p, _ in entries
+            ]
+            col_width = max(len(p) for p in all_paths) + 2 if all_paths else 20
+
+            if main_group:
+                header = super_branch or "(unknown)"
+                ui.message(ac.color_word(header, ac.GREEN))
+                for ds_path, wt_path, branch in main_group:
+                    annotation = ""
+                    if branch != super_branch:
+                        annotation = ac.color_word(
+                            " ({})".format(branch), ac.WHITE,
+                        )
+                    ui.message("  {:<{}}{}{}".format(
+                        ds_path, col_width, wt_path, annotation,
+                    ))
+
+            for branch in sorted(branch_groups):
+                ui.message("")
+                ui.message(ac.color_word(branch, ac.GREEN))
+                for ds_path, wt_path in branch_groups[branch]:
+                    ui.message("  {:<{}}{}".format(
+                        ds_path, col_width, wt_path,
+                    ))
 
         _params_ = dict(
             dataset=Parameter(
