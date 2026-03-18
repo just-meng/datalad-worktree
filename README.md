@@ -78,11 +78,14 @@ worktree add -d /data/my-superdataset /tmp/wt feature/x
 worktree list
 worktree list -d /data/my-superdataset
 
-# Remove worktrees by branch name
+# Remove worktrees by branch name (prompts for confirmation)
 worktree remove feature/x
 
 # Remove worktrees by path
 worktree remove /tmp/wt
+
+# Skip confirmation prompt
+worktree remove --yes feature/x
 
 # Remove worktrees and delete the branch
 worktree remove --delete-branch feature/x
@@ -165,11 +168,12 @@ worktree list [-h] [-d DATASET]
 ### `worktree remove`
 
 ```
-worktree remove [-h] [--delete-branch] [-f] [-d DATASET] target
+worktree remove [-h] [--delete-branch] [-f] [-y] [-d DATASET] target
 
   target                    Worktree path or branch name to remove
   --delete-branch           Also delete the branch (safe delete; refuses if unmerged)
   -f, --force               Force removal even with uncommitted changes; force-delete branch
+  -y, --yes                 Skip confirmation prompt
   -d, --dataset DATASET     Path to superdataset root (default: current directory)
 ```
 
@@ -190,14 +194,15 @@ Subdatasets that are not installed (no `.git` present) are skipped. A failed sub
 
 ### Remove
 
-1. **Determine** if the target is a path or branch name.
-2. **Process datasets deepest-first** so children are removed before parents.
-3. **Remove each worktree** via `git worktree remove`, with a fallback for DataLad repos (delete + prune).
-4. Optionally **delete the branch** (`git branch -d`, or `-D` with `--force`).
+1. **Resolve** which worktrees match the target (path or branch name).
+2. **Preview** the directories that will be deleted and ask for confirmation (`--yes` to skip).
+3. **Process datasets deepest-first** so children are removed before parents.
+4. **Remove each worktree** via `git worktree remove`, with a fallback for DataLad repos (delete + prune).
+5. Optionally **delete the branch** (`git branch -d`, or `-D` with `--force`).
 
 ### List
 
-Shows all datasets that have additional worktrees beyond their main working directory, with the branch checked out in each.
+Shows all datasets that have additional worktrees beyond their main working directory, grouped by branch. Main worktrees are listed first under the superdataset's branch, followed by each extra branch as a separate section.
 
 ## Requirements
 
