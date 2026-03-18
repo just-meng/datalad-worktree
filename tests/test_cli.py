@@ -199,7 +199,7 @@ class TestMainCLI:
         ])
         # Then remove them
         exit_code = main([
-            "--no-color", "remove",
+            "--no-color", "remove", "--yes",
             "-d", str(superds["super"]),
             "feat/rm-test",
         ])
@@ -214,7 +214,7 @@ class TestMainCLI:
             str(wt_path), "feat/rm-path",
         ])
         exit_code = main([
-            "--no-color", "remove",
+            "--no-color", "remove", "--yes",
             "-d", str(superds["super"]),
             str(wt_path),
         ])
@@ -273,7 +273,7 @@ class TestCLISummaryOutput:
         capsys.readouterr()
 
         main([
-            "--no-color", "remove",
+            "--no-color", "remove", "--yes",
             "-d", str(superds["super"]),
             "feat/sum-rm",
         ])
@@ -282,10 +282,94 @@ class TestCLISummaryOutput:
 
     def test_remove_summary_with_skipped(self, superds: dict, capsys):
         main([
-            "--no-color", "remove",
+            "--no-color", "remove", "--yes",
             "-d", str(superds["super"]),
             "nonexistent/branch/xyz",
         ])
         out = capsys.readouterr().out
         assert "0 removed" in out
         assert "skipped" in out
+
+
+class TestRemoveConfirmation:
+    """Test the removal confirmation prompt."""
+
+    def test_preview_shown(self, superds: dict, capsys, monkeypatch):
+        """Preview lists directories before prompting."""
+        main([
+            "--no-color", "add",
+            "-d", str(superds["super"]),
+            str(superds["wt_location"] / "confirm-test"), "feat/confirm",
+        ])
+        capsys.readouterr()
+
+        # Simulate user typing "n"
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+        exit_code = main([
+            "--no-color", "remove",
+            "-d", str(superds["super"]),
+            "feat/confirm",
+        ])
+        out = capsys.readouterr().out
+        assert "Will remove" in out
+        assert "Proceed?" not in out  # input() swallows the prompt
+        assert "Aborted" in out
+        assert exit_code == 1
+        # Worktrees should still exist
+        assert (superds["wt_location"] / "confirm-test").exists()
+
+    def test_confirm_yes_proceeds(self, superds: dict, capsys, monkeypatch):
+        main([
+            "--no-color", "add",
+            "-d", str(superds["super"]),
+            str(superds["wt_location"] / "confirm-y"), "feat/confirm-y",
+        ])
+        capsys.readouterr()
+
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        exit_code = main([
+            "--no-color", "remove",
+            "-d", str(superds["super"]),
+            "feat/confirm-y",
+        ])
+        assert exit_code == 0
+        assert not (superds["wt_location"] / "confirm-y").exists()
+
+    def test_eof_aborts(self, superds: dict, monkeypatch):
+        """EOF (piped input) aborts removal."""
+        main([
+            "--no-color", "add",
+            "-d", str(superds["super"]),
+            str(superds["wt_location"] / "confirm-eof"), "feat/confirm-eof",
+        ])
+
+        def raise_eof(_):
+            raise EOFError
+
+        monkeypatch.setattr("builtins.input", raise_eof)
+        exit_code = main([
+            "--no-color", "remove",
+            "-d", str(superds["super"]),
+            "feat/confirm-eof",
+        ])
+        assert exit_code == 1
+        assert (superds["wt_location"] / "confirm-eof").exists()
+
+    def test_delete_branch_shown_in_preview(self, superds: dict, capsys, monkeypatch):
+        """--delete-branch is mentioned in the preview."""
+        main([
+            "--no-color", "add",
+            "-d", str(superds["super"]),
+            str(superds["wt_location"] / "confirm-br"), "feat/confirm-br",
+        ])
+        capsys.readouterr()
+
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+        main([
+            "--no-color", "remove", "--delete-branch",
+            "-d", str(superds["super"]),
+            "feat/confirm-br",
+        ])
+        out = capsys.readouterr().out
+        assert "delete branch" in out.lower()
+        assert "feat/confirm-br" in out

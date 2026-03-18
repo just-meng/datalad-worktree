@@ -8,6 +8,7 @@ import logging
 import shutil
 import subprocess
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from datalad_worktree.core import (
@@ -110,6 +111,92 @@ def _git_branch_delete(repo_path: Path, branch: str, force: bool = False) -> str
     return ""
 
 
+@dataclass
+class RemoveTarget:
+    """A resolved worktree target for removal."""
+    dataset_path: str   # relative path (or "." for superds)
+    repo_path: Path     # path to the original repository
+    worktree_path: Path # path to the worktree to remove
+    branch: str         # branch name (or "" if unknown)
+
+
+def resolve_removal_targets(
+    superds_path: Path,
+    target: str,
+) -> tuple[list[RemoveTarget], list[WorktreeReport]]:
+    """
+    Resolve which worktrees would be removed, without removing anything.
+
+    Returns
+    -------
+    targets : list[RemoveTarget]
+        Worktrees that would be removed, deepest-first.
+    skipped : list[WorktreeReport]
+        Datasets where no matching worktree was found.
+    """
+    superds_path = validate_superds(superds_path)
+    mode = _resolve_target(target)
+
+    if mode == "path":
+        worktree_root = Path(target).resolve()
+    else:
+        worktree_root = None
+
+    # Collect all datasets: super + installed subs
+    all_datasets: list[tuple[str, Path]] = [(".", superds_path)]
+    for subds in discover_subdatasets(superds_path):
+        if subds.installed and is_git_repo(subds.abs_path):
+            all_datasets.append((subds.rel_path, subds.abs_path))
+
+    # Process deepest first for removal
+    all_datasets.reverse()
+
+    targets: list[RemoveTarget] = []
+    skipped: list[WorktreeReport] = []
+
+    for dataset_path, repo_path in all_datasets:
+        if mode == "path":
+            if dataset_path == ".":
+                wt_path = worktree_root
+            else:
+                wt_path = worktree_root / dataset_path
+
+            found = _find_worktree_by_path(repo_path, wt_path)
+            if found is None:
+                skipped.append(WorktreeReport(
+                    dataset_path=dataset_path,
+                    source=repo_path,
+                    destination=wt_path,
+                    result=WorktreeResult.SKIPPED_NO_WORKTREE,
+                    branch="",
+                    message=f"no worktree at {wt_path}",
+                ))
+                continue
+            wt_path = found
+            branch = ""
+            for entry in git_worktree_list(repo_path):
+                if entry.path.resolve() == wt_path.resolve():
+                    branch = entry.branch or ""
+                    break
+            targets.append(RemoveTarget(dataset_path, repo_path, wt_path, branch))
+
+        else:  # mode == "branch"
+            wt_path, found_branch = _find_worktree_by_branch(repo_path, target)
+            if wt_path is None:
+                skipped.append(WorktreeReport(
+                    dataset_path=dataset_path,
+                    source=repo_path,
+                    destination=repo_path,
+                    result=WorktreeResult.SKIPPED_NO_WORKTREE,
+                    branch=target,
+                    message=f"no worktree on branch '{target}'",
+                ))
+                continue
+            targets.append(RemoveTarget(dataset_path, repo_path, wt_path, target))
+
+    return targets, skipped
+
+
 def remove_nested_worktrees(
     superds_path: Path,
     target: str,
@@ -143,106 +230,55 @@ def remove_nested_worktrees(
     WorktreeReport
         One report per dataset processed.
     """
-    superds_path = validate_superds(superds_path)
-    mode = _resolve_target(target)
+    targets, skipped = resolve_removal_targets(superds_path, target)
 
-    if mode == "path":
-        worktree_root = Path(target).resolve()
-    else:
-        worktree_root = None  # will be determined per-dataset
+    # Yield skipped reports
+    yield from skipped
 
-    # Collect all datasets: super + installed subs
-    all_datasets: list[tuple[str, Path]] = [(".", superds_path)]
-    for subds in discover_subdatasets(superds_path):
-        if subds.installed and is_git_repo(subds.abs_path):
-            all_datasets.append((subds.rel_path, subds.abs_path))
-
-    # Process deepest first for removal
-    all_datasets.reverse()
-
-    branch_for_report = target if mode == "branch" else ""
-
-    for dataset_path, repo_path in all_datasets:
-        if mode == "path":
-            if dataset_path == ".":
-                wt_path = worktree_root
-            else:
-                wt_path = worktree_root / dataset_path
-
-            found = _find_worktree_by_path(repo_path, wt_path)
-            if found is None:
-                yield WorktreeReport(
-                    dataset_path=dataset_path,
-                    source=repo_path,
-                    destination=wt_path,
-                    result=WorktreeResult.SKIPPED_NO_WORKTREE,
-                    branch=branch_for_report,
-                    message=f"no worktree at {wt_path}",
-                )
-                continue
-            wt_path = found
-            # Determine the branch for this worktree
-            for entry in git_worktree_list(repo_path):
-                if entry.path.resolve() == wt_path.resolve():
-                    branch_for_report = entry.branch or ""
-                    break
-
-        else:  # mode == "branch"
-            wt_path, found_branch = _find_worktree_by_branch(repo_path, target)
-            if wt_path is None:
-                yield WorktreeReport(
-                    dataset_path=dataset_path,
-                    source=repo_path,
-                    destination=repo_path,  # no worktree path to show
-                    result=WorktreeResult.SKIPPED_NO_WORKTREE,
-                    branch=target,
-                    message=f"no worktree on branch '{target}'",
-                )
-                continue
-            branch_for_report = target
-
-        # Remove the worktree
-        err = _git_worktree_remove(repo_path, wt_path, force=force)
+    # Remove each target
+    for t in targets:
+        err = _git_worktree_remove(t.repo_path, t.worktree_path, force=force)
         if err:
             yield WorktreeReport(
-                dataset_path=dataset_path,
-                source=repo_path,
-                destination=wt_path,
+                dataset_path=t.dataset_path,
+                source=t.repo_path,
+                destination=t.worktree_path,
                 result=WorktreeResult.FAILED,
-                branch=branch_for_report,
+                branch=t.branch,
                 message=err,
             )
             continue
 
         yield WorktreeReport(
-            dataset_path=dataset_path,
-            source=repo_path,
-            destination=wt_path,
+            dataset_path=t.dataset_path,
+            source=t.repo_path,
+            destination=t.worktree_path,
             result=WorktreeResult.REMOVED,
-            branch=branch_for_report,
+            branch=t.branch,
         )
 
         # Delete branch if requested
-        if delete_branch and branch_for_report:
-            err = _git_branch_delete(repo_path, branch_for_report, force=force)
+        if delete_branch and t.branch:
+            err = _git_branch_delete(t.repo_path, t.branch, force=force)
             if err:
                 yield WorktreeReport(
-                    dataset_path=dataset_path,
-                    source=repo_path,
-                    destination=wt_path,
+                    dataset_path=t.dataset_path,
+                    source=t.repo_path,
+                    destination=t.worktree_path,
                     result=WorktreeResult.FAILED,
-                    branch=branch_for_report,
+                    branch=t.branch,
                     message=f"branch delete failed: {err}",
                 )
             else:
                 yield WorktreeReport(
-                    dataset_path=dataset_path,
-                    source=repo_path,
-                    destination=wt_path,
+                    dataset_path=t.dataset_path,
+                    source=t.repo_path,
+                    destination=t.worktree_path,
                     result=WorktreeResult.REMOVED_BRANCH,
-                    branch=branch_for_report,
+                    branch=t.branch,
                 )
 
     # Prune all repos
-    for _, repo_path in all_datasets:
+    all_repos = {t.repo_path for t in targets}
+    for repo_path in all_repos:
         _git_worktree_prune(repo_path)

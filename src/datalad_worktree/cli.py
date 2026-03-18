@@ -138,6 +138,10 @@ def build_parser():
         help="Force removal even with uncommitted changes; force-delete branch",
     )
     rm_p.add_argument(
+        "-y", "--yes", action="store_true", default=False,
+        help="Skip confirmation prompt",
+    )
+    rm_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
         help="Path to the superdataset root (default: current directory)",
     )
@@ -269,14 +273,52 @@ def _cmd_list(args) -> int:
 
 
 def _cmd_remove(args) -> int:
-    from datalad_worktree.remove import remove_nested_worktrees
+    from datalad_worktree.remove import (
+        remove_nested_worktrees,
+        resolve_removal_targets,
+    )
 
     superds_path = (args.dataset or Path.cwd()).resolve()
 
+    # ── Resolve targets ─────────────────────────────────────────────────
+    try:
+        targets, skipped = resolve_removal_targets(superds_path, args.target)
+    except ValueError as e:
+        print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
+        return 1
+
+    if not targets:
+        for report in skipped:
+            _render_report(report)
+        print(f"\n0 removed, {len(skipped)} skipped")
+        return 0
+
+    # ── Show preview and confirm ────────────────────────────────────────
+    col_width = max(len(t.dataset_path) for t in targets) + 2
+
+    print(f"Will remove {len(targets)} worktree(s):")
+    for t in targets:
+        print(f"  {t.dataset_path:<{col_width}}{t.worktree_path}")
+    if args.delete_branch:
+        branches = sorted({t.branch for t in targets if t.branch})
+        if branches:
+            print(f"Will also delete branch: {', '.join(branches)}")
+
+    if not args.yes:
+        try:
+            answer = input(f"\nProceed? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 1
+        if answer.strip().lower() != "y":
+            print("Aborted.")
+            return 1
+
+    # ── Remove ──────────────────────────────────────────────────────────
     try:
         reports: list[WorktreeReport] = []
         removed = 0
-        skipped = 0
+        skipped_count = len(skipped)
         for report in remove_nested_worktrees(
             superds_path=superds_path,
             target=args.target,
@@ -288,7 +330,7 @@ def _cmd_remove(args) -> int:
             if report.result == WorktreeResult.REMOVED:
                 removed += 1
             elif report.result == WorktreeResult.SKIPPED_NO_WORKTREE:
-                skipped += 1
+                skipped_count += 1
     except ValueError as e:
         print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
         return 1
@@ -296,8 +338,8 @@ def _cmd_remove(args) -> int:
     has_failures = any(r.result == WorktreeResult.FAILED for r in reports)
 
     parts = [f"{removed} removed"]
-    if skipped:
-        parts.append(f"{skipped} skipped")
+    if skipped_count:
+        parts.append(f"{skipped_count} skipped")
     print(f"\n{', '.join(parts)}")
 
     return 1 if has_failures else 0
