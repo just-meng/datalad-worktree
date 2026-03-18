@@ -14,7 +14,7 @@ As a DataLad extension (recommended), alongside other extensions:
 uv tool install datalad \
   --with datalad-next \
   --with datalad-container \
-  --with ~/repos/datalad-worktree \
+  --with datalad-worktree@git+https://github.com/just-meng/datalad-worktree.git \
   --force
 ```
 
