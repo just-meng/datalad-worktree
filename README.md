@@ -35,19 +35,19 @@ uv run --project ~/path/to/datalad-worktree datalad worktree-list
 cd /data/my-superdataset
 
 # Create nested worktrees
-worktree add /tmp/worktrees/my-feature feature/new-analysis
+worktree add /tmp/worktrees/my-feature my-feature
 
 # List all worktrees across the hierarchy
 worktree list
 
 # Remove worktrees by branch name
-worktree remove feature/new-analysis
+worktree remove my-feature
 ```
 
 Creating worktrees discovers all subdatasets and produces:
 
 ```
-/tmp/worktrees/my-feature/              <- superdataset worktree (branch: feature/new-analysis)
+/tmp/worktrees/my-feature/              <- superdataset worktree (branch: my-feature)
 ├── sub-01/                             <- subdataset worktree
 │   └── derivatives/                    <- nested subdataset worktree
 ├── sub-02/
@@ -55,7 +55,7 @@ Creating worktrees discovers all subdatasets and produces:
 └── code/shared-library/                <- subdataset worktree at any depth
 ```
 
-Each directory is a proper git worktree checked out on `feature/new-analysis`. If the branch doesn't exist in a given dataset, it is created automatically.
+Each directory is a proper git worktree checked out on `my-feature`. If the branch doesn't exist in a given dataset, it is created automatically.
 
 ## Usage
 
@@ -66,19 +66,19 @@ All commands are run from the superdataset root (or pass `-d <path>` to specify 
 ```bash
 # Create worktrees
 worktree add <worktree-path> <branch>
-worktree add --dry-run /tmp/wt dev/experiment
-worktree add --force /tmp/wt feature/x
-worktree add --no-create-branch /tmp/wt release/1.0
+worktree add --dry-run /tmp/wt experiment
+worktree add --force /tmp/wt my-feature
+worktree add --no-create-branch /tmp/wt v1.0
 
 # List worktrees (grouped by branch)
 worktree list
 
 # Remove worktrees (prompts for confirmation)
-worktree remove feature/x
+worktree remove my-feature
 worktree remove /tmp/wt
-worktree remove --yes feature/x              # skip prompt
-worktree remove --delete-branch feature/x    # also delete the branch
-worktree remove --force --delete-branch feature/x
+worktree remove --yes my-feature              # skip prompt
+worktree remove --delete-branch my-feature    # also delete the branch
+worktree remove --force --delete-branch my-feature
 ```
 
 ### DataLad Commands
@@ -86,9 +86,9 @@ worktree remove --force --delete-branch feature/x
 If DataLad is installed, the tool registers as a DataLad extension:
 
 ```bash
-datalad worktree-add /tmp/wt feature/new-analysis
+datalad worktree-add /tmp/wt my-feature
 datalad worktree-list
-datalad worktree-remove feature/x
+datalad worktree-remove my-feature
 ```
 
 ## CLI Reference
