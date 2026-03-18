@@ -17,24 +17,20 @@ class TestBuildParser:
         args = parser.parse_args(["/tmp/wt", "b"])
         assert args.dry_run is False
         assert args.force is False
-        assert args.verbose is False
         assert args.no_create_branch is False
-        assert args.no_datalad is False
         assert args.no_color is False
 
     def test_all_flags(self):
         parser = build_parser()
         args = parser.parse_args([
-            "-n", "-f", "-v",
-            "--no-create-branch", "--no-datalad", "--no-color",
+            "-n", "-f",
+            "--no-create-branch", "--no-color",
             "-d", "/data/ds",
             "/tmp/wt", "b",
         ])
         assert args.dry_run is True
         assert args.force is True
-        assert args.verbose is True
         assert args.no_create_branch is True
-        assert args.no_datalad is True
         assert args.no_color is True
         assert str(args.dataset) == "/data/ds"
 
@@ -48,17 +44,9 @@ class TestMainCLI:
         ])
         assert exit_code == 0
 
-    def test_dry_run_no_datalad(self, superds: dict):
-        exit_code = main([
-            "--dry-run", "--no-color", "--no-datalad",
-            "-d", str(superds["super"]),
-            str(superds["wt_location"] / "test-cli"), "feat/cli-nodl",
-        ])
-        assert exit_code == 0
-
     def test_not_a_repo_returns_1(self, tmp_path):
         exit_code = main([
-            "--no-color", "--no-datalad",
+            "--no-color",
             "-d", str(tmp_path),
             str(tmp_path / "wt"), "b",
         ])

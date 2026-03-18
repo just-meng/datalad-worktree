@@ -19,7 +19,7 @@ datalad-worktree/
         ├── __main__.py    # Entry point for `python -m datalad_worktree`
         ├── cli.py         # Standalone CLI (argparse, colored output)
         ├── core.py        # Core logic: validation, worktree creation, result types
-        ├── discovery.py   # Subdataset discovery (DataLad API + .gitmodules fallback)
+        ├── discovery.py   # Subdataset discovery via recursive .gitmodules parsing
         └── dl_command.py  # DataLad Interface subclass for `datalad worktree`
 ```
 
@@ -42,17 +42,18 @@ uv run --extra dev pytest
 
 ### Call Flow
 
-1. **CLI entry** (`cli.py:main`) parses args, calls `core.py:create_nested_worktrees()`
-2. **DataLad entry** (`dl_command.py:WorktreeCreate.__call__`) uses `require_dataset()`, calls the same `create_nested_worktrees()`, yields DataLad result dicts
-3. **`create_nested_worktrees()`** calls `validate_superds()`, then `discover_subdatasets()`, then iterates over all datasets calling `_prepare_destination()` + `_git_worktree_add()` for each
-4. **Discovery** (`discovery.py`) tries `discover_via_datalad()`, catches ImportError/exceptions, falls back to `discover_via_gitmodules()`
+1. **CLI entry** (`cli.py:main`) parses args, iterates `core.py:create_nested_worktrees()` generator, renders each report as it arrives
+2. **DataLad entry** (`dl_command.py:WorktreeCreate.__call__`) uses `require_dataset()`, iterates the same generator, yields DataLad result dicts
+3. **`create_nested_worktrees()`** is a generator that calls `validate_superds()`, then `discover_subdatasets()`, then yields a `WorktreeReport` for each dataset as it is processed
+4. **Discovery** (`discovery.py`) recursively parses `.gitmodules` files with `configparser`
 
 ### Key Design Decisions
 
-- **Two discovery backends**: `discover_via_datalad()` uses the DataLad Python API. `discover_via_gitmodules()` recursively parses `.gitmodules` with `configparser`. Auto-selects; override with `--no-datalad`.
+- **Discovery via .gitmodules**: Recursively parses `.gitmodules` with `configparser`. Fast, no dependencies.
+- **Generator-based**: `create_nested_worktrees()` yields `WorktreeReport` objects one at a time, enabling real-time progress display. Use `collect_worktree_reports()` to aggregate into a `WorktreeCreateResult`.
 - **Sorted by path**: Subdatasets are always sorted so parents are processed before children.
 - **Gitlink cleanup**: When the superds worktree is created, git places gitlink files at submodule mount points. `_prepare_destination()` in `core.py` detects and removes these before creating each subdataset worktree. It handles three cases: gitlink file, empty directory, directory containing only `.git`.
-- **Failure isolation**: A failed subdataset does not abort remaining ones. Only a superds failure is fatal. All results are collected into `WorktreeCreateResult`.
+- **Failure isolation**: A failed subdataset does not abort remaining ones. Only a superds failure is fatal.
 - **Branch logic is per-dataset**: If branch exists, checkout. If not, create with `-b`. Evaluated independently so some datasets can already have the branch.
 - **All git interactions** go through `subprocess.run()` with `capture_output=True, text=True`. No gitpython dependency.
 
@@ -81,23 +82,20 @@ uv run --extra dev pytest
 
 **Add a CLI flag**: add to `cli.py:build_parser()`, pass through to `create_nested_worktrees()` in `core.py`, add corresponding `Parameter` in `dl_command.py:WorktreeCreate._params_`
 
-**Add a discovery backend**: add function in `discovery.py`, integrate into `discover_subdatasets()` selection logic
-
 **Change worktree creation behavior**: modify `_git_worktree_add()` and/or `_prepare_destination()` in `core.py`
 
-**Change result reporting**: modify `WorktreeResult` enum and `WorktreeReport` dataclass in `core.py`, update CLI rendering in `cli.py:main()`, update DataLad result mapping in `dl_command.py`
+**Change result reporting**: modify `WorktreeResult` enum and `WorktreeReport` dataclass in `core.py`, update CLI rendering in `cli.py:_render_report()`, update DataLad result mapping in `dl_command.py`
 
 ## Testing Considerations
 
 - Tests need git repos with nested submodules to simulate DataLad dataset hierarchies
 - The tool shells out to git via `subprocess.run()` — use real temp repos with `tmp_path` fixture
-- Discovery has two code paths that should both be tested; force `.gitmodules` path with `prefer_datalad=False`
 - `_prepare_destination()` handles three filesystem states (gitlink file, empty dir, dir with only `.git`) — each needs a test case
 - `_branch_exists()` and `_git_worktree_add()` can be tested against real temp repos
-- Dry run mode should produce only `SKIPPED_DRY_RUN` results and create no files
+- Dry run mode should produce `SKIPPED_DRY_RUN` for installable datasets and real skip results for uninstalled ones
 
 ## Dependencies
 
 - **Required**: Python >= 3.11, git on PATH
-- **Optional**: DataLad (enables API discovery and `datalad worktree` command)
+- **Optional**: DataLad (enables `datalad worktree` command)
 - **No other Python runtime dependencies** beyond the standard library when running without DataLad

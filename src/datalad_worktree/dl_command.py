@@ -48,9 +48,11 @@ try:
                 return
             status = res.get("status", "")
             dest = res.get("path", "")
-            source = res.get("source", "")
             dataset_path = res.get("dataset_path", "")
-            label = dataset_path or "superdataset"
+            label = dataset_path or "."
+            skip_reason = res.get("skip_reason", "")
+            dry_run = res.get("dry_run", False)
+
             if status == "ok":
                 extra = ""
                 if res.get("new_branch"):
@@ -60,15 +62,53 @@ try:
                     label, dest, extra,
                 ))
             elif status == "notneeded":
-                ui.message("{}   {} -> {}".format(
-                    ac.color_word("skip", ac.YELLOW),
-                    label, dest,
-                ))
+                if dry_run:
+                    ui.message("{} {} {} -> {}".format(
+                        ac.color_word("create", ac.GREEN),
+                        ac.color_word("[DRY-RUN]", ac.WHITE),
+                        label, dest,
+                    ))
+                else:
+                    ui.message("{}   {} -> {} ({})".format(
+                        ac.color_word("skip", ac.YELLOW),
+                        label, dest, skip_reason,
+                    ))
             else:
                 ui.message("{} {}: {}".format(
                     ac.color_word("error", ac.RED),
                     label, res.get("message", ""),
                 ))
+
+        @staticmethod
+        def custom_result_summary_renderer(results):
+            worktree_root = None
+            created = 0
+            skipped = 0
+            dry_run_count = 0
+            is_dry_run = False
+            for res in results:
+                if res.get("action") != "worktree":
+                    continue
+                if worktree_root is None and res.get("worktree_root"):
+                    worktree_root = res["worktree_root"]
+                if res.get("dry_run"):
+                    is_dry_run = True
+                if res.get("status") == "ok":
+                    created += 1
+                if res.get("status") == "notneeded":
+                    if res.get("dry_run"):
+                        dry_run_count += 1
+                    else:
+                        skipped += 1
+
+            if worktree_root:
+                if is_dry_run:
+                    parts = [f"{dry_run_count} would be created"]
+                else:
+                    parts = [f"{created} created"]
+                if skipped:
+                    parts.append(f"{skipped} skipped")
+                ui.message(f"{', '.join(parts)} at {worktree_root}")
 
         _params_ = dict(
             worktree_path=Parameter(
@@ -86,15 +126,9 @@ try:
                 doc="Path to the superdataset (default: current directory)",
                 constraints=EnsureStr() | EnsureNone(),
             ),
-            create_branch=Parameter(
-                args=("--create-branch",),
-                doc="Create the branch if it doesn't exist (default: True)",
-                action="store_true",
-                default=True,
-            ),
             no_create_branch=Parameter(
                 args=("--no-create-branch",),
-                doc="Fail if the branch doesn't exist",
+                doc="Fail if the branch doesn't exist instead of creating it",
                 action="store_true",
                 default=False,
             ),
@@ -118,7 +152,6 @@ try:
             worktree_path,
             branch,
             dataset=None,
-            create_branch=True,
             no_create_branch=False,
             force=False,
             dry_run=False,
@@ -137,20 +170,16 @@ try:
             )
 
             superds_path = Path(ds.path)
-            actual_create_branch = create_branch and not no_create_branch
+            worktree_root = Path(worktree_path).resolve()
 
-            result = create_nested_worktrees(
+            for report in create_nested_worktrees(
                 superds_path=superds_path,
                 worktree_path=Path(worktree_path),
                 branch=branch,
-                create_branch=actual_create_branch,
+                create_branch=not no_create_branch,
                 force=force,
                 dry_run=dry_run,
-                prefer_datalad=True,
-            )
-
-            # Yield DataLad-style result dicts
-            for report in result.reports:
+            ):
                 if report.result in (
                     WorktreeResult.CREATED,
                     WorktreeResult.CREATED_NEW_BRANCH,
@@ -160,6 +189,13 @@ try:
                     status = "notneeded"
                 else:
                     status = "error"
+
+                # Determine skip reason for display
+                skip_reason = ""
+                if report.result == WorktreeResult.SKIPPED_NOT_INSTALLED:
+                    skip_reason = "not installed"
+                elif report.result == WorktreeResult.SKIPPED_NOT_GIT_REPO:
+                    skip_reason = "not a git repo"
 
                 yield get_status_dict(
                     action="worktree",
@@ -171,6 +207,9 @@ try:
                     dataset_path=report.dataset_path,
                     branch=report.branch,
                     new_branch=report.result == WorktreeResult.CREATED_NEW_BRANCH,
+                    skip_reason=skip_reason,
+                    dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
+                    worktree_root=str(worktree_root),
                     type="dataset",
                 )
 

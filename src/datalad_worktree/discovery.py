@@ -1,18 +1,13 @@
 """
-Subdataset discovery strategies.
-
-Provides multiple backends for discovering nested subdatasets:
-  1. DataLad API (preferred when datalad is available)
-  2. .gitmodules recursive parsing (fallback)
+Subdataset discovery via recursive .gitmodules parsing.
 """
 
 from __future__ import annotations
 
 import configparser
 import logging
-import os
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -61,84 +56,42 @@ def is_git_repo(path: Path) -> bool:
         return False
 
 
-def discover_via_datalad(superds_path: Path) -> list[SubDataset]:
+def discover_subdatasets(superds_path: Path) -> list[SubDataset]:
     """
-    Discover subdatasets using the DataLad Python API.
+    Discover all subdatasets under a superdataset by recursively
+    parsing .gitmodules files.
 
-    This is the most robust method as it handles all DataLad-specific edge cases.
+    Parameters
+    ----------
+    superds_path : Path
+        Absolute path to the superdataset root.
+
+    Returns
+    -------
+    list[SubDataset]
+        Sorted list of discovered subdatasets (parents before children).
     """
-    try:
-        from datalad.api import subdatasets as dl_subdatasets
-        from datalad.distribution.dataset import Dataset
-    except ImportError:
-        raise RuntimeError(
-            "DataLad is not installed. Install it with: pip install datalad"
-        )
+    gitmodules_path = superds_path / ".gitmodules"
+    if not gitmodules_path.exists():
+        return []
 
-    logger.info("Discovering subdatasets via DataLad API")
-
-    ds = Dataset(str(superds_path))
-    results = dl_subdatasets(
-        dataset=ds,
-        recursive=True,
-        recursion_limit=None,
-        result_renderer="disabled",
-        on_failure="ignore",
-        return_type="generator",
-    )
-
-    subdatasets = []
-    for res in results:
-        if res.get("status") not in ("ok", "notneeded"):
-            logger.debug("Skipping result with status %s: %s", res.get("status"), res)
-            continue
-
-        if res.get("type") != "dataset":
-            continue
-
-        sub_path = Path(res["path"])
-        rel_path = sub_path.relative_to(superds_path)
-
-        # Determine depth from the relative path
-        depth = len(rel_path.parts) - 1  # approximate nesting
-
-        installed = sub_path.exists() and (sub_path / ".git").exists()
-
-        subdatasets.append(
-            SubDataset(
-                rel_path=str(rel_path),
-                abs_path=sub_path,
-                installed=installed,
-                depth=depth,
-            )
-        )
-
-    # Sort by path to ensure parents come before children
-    subdatasets.sort(key=lambda sd: sd.rel_path)
-    logger.info("Discovered %d subdataset(s) via DataLad", len(subdatasets))
-    return subdatasets
+    return _discover_via_gitmodules(superds_path)
 
 
-def discover_via_gitmodules(
+def _discover_via_gitmodules(
     superds_path: Path,
     _prefix: str = "",
     _depth: int = 0,
 ) -> list[SubDataset]:
     """
     Discover subdatasets by recursively parsing .gitmodules files.
-
-    This is the fallback when DataLad is not available.
     """
-    if _depth == 0:
-        logger.info("Discovering subdatasets via .gitmodules parsing")
-
     subdatasets = []
     gitmodules_path = superds_path / ".gitmodules"
 
     if not gitmodules_path.is_file():
         return subdatasets
 
-    # Parse .gitmodules using configparser
     config = configparser.ConfigParser()
     try:
         config.read(str(gitmodules_path))
@@ -172,62 +125,11 @@ def discover_via_gitmodules(
         )
 
         if installed:
-            # Recurse into this subdataset
-            children = discover_via_gitmodules(
+            children = _discover_via_gitmodules(
                 full_path,
                 _prefix=overall_rel,
                 _depth=_depth + 1,
             )
             subdatasets.extend(children)
-        else:
-            logger.debug(
-                "Subdataset '%s' is not installed; skipping recursive discovery",
-                overall_rel,
-            )
-
-    if _depth == 0:
-        logger.info(
-            "Discovered %d subdataset(s) via .gitmodules", len(subdatasets)
-        )
 
     return subdatasets
-
-
-def discover_subdatasets(
-    superds_path: Path,
-    prefer_datalad: bool = True,
-) -> list[SubDataset]:
-    """
-    Discover all subdatasets under a superdataset.
-
-    Tries the DataLad API first, falls back to .gitmodules parsing.
-
-    Parameters
-    ----------
-    superds_path : Path
-        Absolute path to the superdataset root.
-    prefer_datalad : bool
-        Whether to try DataLad first (default True).
-
-    Returns
-    -------
-    list[SubDataset]
-        Sorted list of discovered subdatasets (parents before children).
-    """
-    if prefer_datalad:
-        try:
-            return discover_via_datalad(superds_path)
-        except RuntimeError:
-            logger.info("DataLad not available, falling back to .gitmodules parsing")
-        except Exception as e:
-            logger.warning(
-                "DataLad discovery failed (%s), falling back to .gitmodules parsing",
-                e,
-            )
-
-    gitmodules_path = superds_path / ".gitmodules"
-    if not gitmodules_path.exists():
-        logger.info("No .gitmodules found; assuming no subdatasets")
-        return []
-
-    return discover_via_gitmodules(superds_path)

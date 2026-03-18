@@ -5,13 +5,12 @@ Core logic for creating nested git worktrees.
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import subprocess
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Optional
 
 from datalad_worktree.discovery import SubDataset, discover_subdatasets, is_git_repo
 
@@ -84,6 +83,17 @@ class WorktreeCreateResult:
         return "\n".join(lines)
 
 
+def collect_worktree_reports(
+    reports: Iterable[WorktreeReport],
+    worktree_root: Path,
+    branch: str,
+) -> WorktreeCreateResult:
+    """Collect an iterable of WorktreeReport into a WorktreeCreateResult."""
+    result = WorktreeCreateResult(worktree_root=worktree_root, branch=branch)
+    result.reports = list(reports)
+    return result
+
+
 def _branch_exists(repo_path: Path, branch: str) -> bool:
     """Check whether a branch exists in the given repository."""
     result = subprocess.run(
@@ -119,15 +129,13 @@ def _git_worktree_add(
     if branch_exists:
         cmd.extend([str(dest_path), branch])
         result_type = WorktreeResult.CREATED
-        action_desc = f"checkout existing branch '{branch}'"
     elif create_branch:
         cmd.extend(["-b", branch, str(dest_path)])
         result_type = WorktreeResult.CREATED_NEW_BRANCH
-        action_desc = f"create and checkout new branch '{branch}'"
     else:
         return (
             WorktreeResult.FAILED,
-            f"Branch '{branch}' does not exist and create_branch=False",
+            f"Branch '{branch}' does not exist and --no-create-branch was set",
         )
 
     logger.debug("Running: %s", " ".join(cmd))
@@ -148,10 +156,10 @@ def _git_worktree_add(
         stderr = result.stderr.strip()
         return (WorktreeResult.FAILED, f"git worktree add failed: {stderr}")
 
-    return (result_type, f"OK: {action_desc}")
+    return (result_type, "")
 
 
-def _prepare_destination(dest_path: Path, verbose: bool = False) -> None:
+def _prepare_destination(dest_path: Path) -> None:
     """
     Prepare the destination path for a subdataset worktree.
 
@@ -160,13 +168,10 @@ def _prepare_destination(dest_path: Path, verbose: bool = False) -> None:
     so `git worktree add` can create its own directory.
     """
     if not dest_path.exists():
-        # Ensure parent directories exist
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         return
 
     if dest_path.is_file():
-        # Likely a .git file (gitlink) from the parent worktree's submodule
-        # registration. Read it to confirm.
         content = dest_path.read_text().strip()
         if content.startswith("gitdir:"):
             logger.debug("Removing gitlink placeholder at %s", dest_path)
@@ -209,7 +214,6 @@ def validate_superds(path: Path) -> Path:
     if not is_git_repo(path):
         raise ValueError(f"Not a git repository: {path}")
 
-    # Check we're at the top level
     result = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
         capture_output=True,
@@ -233,14 +237,12 @@ def create_nested_worktrees(
     create_branch: bool = True,
     force: bool = False,
     dry_run: bool = False,
-    prefer_datalad: bool = True,
-) -> WorktreeCreateResult:
+) -> Iterator[WorktreeReport]:
     """
     Create nested git worktrees for a DataLad superdataset and all its subdatasets.
 
-    This mirrors the nested dataset structure under a new worktree root, with
-    each dataset (super and sub) getting its own git worktree on the specified
-    branch.
+    Yields WorktreeReport objects as each dataset is processed, enabling
+    real-time progress display by callers.
 
     Parameters
     ----------
@@ -258,60 +260,43 @@ def create_nested_worktrees(
         Pass ``--force`` to ``git worktree add``.
     dry_run : bool
         If True, don't actually create anything; just report what would happen.
-    prefer_datalad : bool
-        If True (default), try using the DataLad API for subdataset discovery
-        before falling back to .gitmodules parsing.
 
-    Returns
-    -------
-    WorktreeCreateResult
-        Detailed result of the operation.
+    Yields
+    ------
+    WorktreeReport
+        One report per dataset (superdataset + each subdataset).
 
     Raises
     ------
     ValueError
         If ``superds_path`` is not a valid git repository root.
     """
-    # Validate
     superds_path = validate_superds(superds_path)
-
     worktree_root = worktree_path.resolve()
 
-    logger.info("Super dataset:    %s", superds_path)
-    logger.info("Worktree root:    %s", worktree_root)
-    logger.info("Branch:           %s", branch)
-
-    result = WorktreeCreateResult(worktree_root=worktree_root, branch=branch)
-
     # ── Check existing worktree ──────────────────────────────────────────
-    if worktree_root.exists() and not force:
-        result.reports.append(
-            WorktreeReport(
-                dataset_path=".",
-                source=superds_path,
-                destination=worktree_root,
-                result=WorktreeResult.FAILED,
-                branch=branch,
-                message=f"Worktree root already exists: {worktree_root}. Use force=True.",
-            )
+    if worktree_root.exists() and not force and not dry_run:
+        yield WorktreeReport(
+            dataset_path=".",
+            source=superds_path,
+            destination=worktree_root,
+            result=WorktreeResult.FAILED,
+            branch=branch,
+            message=f"Worktree root already exists: {worktree_root}. Use --force to overwrite.",
         )
-        return result
+        return
 
     # ── Discover subdatasets ─────────────────────────────────────────────
-    subdatasets = discover_subdatasets(superds_path, prefer_datalad=prefer_datalad)
-    logger.info("Found %d subdataset(s)", len(subdatasets))
+    subdatasets = discover_subdatasets(superds_path)
 
     # ── Create super dataset worktree ────────────────────────────────────
     if dry_run:
-        result.reports.append(
-            WorktreeReport(
-                dataset_path=".",
-                source=superds_path,
-                destination=worktree_root,
-                result=WorktreeResult.SKIPPED_DRY_RUN,
-                branch=branch,
-                message="Dry run: would create superdataset worktree",
-            )
+        yield WorktreeReport(
+            dataset_path=".",
+            source=superds_path,
+            destination=worktree_root,
+            result=WorktreeResult.SKIPPED_DRY_RUN,
+            branch=branch,
         )
     else:
         worktree_root.parent.mkdir(parents=True, exist_ok=True)
@@ -323,73 +308,54 @@ def create_nested_worktrees(
             create_branch=create_branch,
             force=force,
         )
-        result.reports.append(
-            WorktreeReport(
-                dataset_path=".",
-                source=superds_path,
-                destination=worktree_root,
-                result=wt_result,
-                branch=branch,
-                message=wt_msg,
-            )
+        yield WorktreeReport(
+            dataset_path=".",
+            source=superds_path,
+            destination=worktree_root,
+            result=wt_result,
+            branch=branch,
+            message=wt_msg,
         )
 
         if wt_result == WorktreeResult.FAILED:
-            logger.error(
-                "Failed to create superdataset worktree, aborting: %s", wt_msg
-            )
-            return result
+            return
 
     # ── Create subdataset worktrees ──────────────────────────────────────
     for subds in subdatasets:
         dest_subds = worktree_root / subds.rel_path
 
         if not subds.installed:
-            result.reports.append(
-                WorktreeReport(
-                    dataset_path=subds.rel_path,
-                    source=subds.abs_path,
-                    destination=dest_subds,
-                    result=WorktreeResult.SKIPPED_NOT_INSTALLED,
-                    branch=branch,
-                    message="Subdataset not installed (no .git)",
-                )
-            )
-            logger.warning(
-                "Skipping '%s': not installed", subds.rel_path
+            yield WorktreeReport(
+                dataset_path=subds.rel_path,
+                source=subds.abs_path,
+                destination=dest_subds,
+                result=WorktreeResult.SKIPPED_NOT_INSTALLED,
+                branch=branch,
+                message="not installed",
             )
             continue
 
         if not is_git_repo(subds.abs_path):
-            result.reports.append(
-                WorktreeReport(
-                    dataset_path=subds.rel_path,
-                    source=subds.abs_path,
-                    destination=dest_subds,
-                    result=WorktreeResult.SKIPPED_NOT_GIT_REPO,
-                    branch=branch,
-                    message="Not a valid git repository",
-                )
-            )
-            logger.warning(
-                "Skipping '%s': not a valid git repo", subds.rel_path
+            yield WorktreeReport(
+                dataset_path=subds.rel_path,
+                source=subds.abs_path,
+                destination=dest_subds,
+                result=WorktreeResult.SKIPPED_NOT_GIT_REPO,
+                branch=branch,
+                message="not a git repo",
             )
             continue
 
         if dry_run:
-            result.reports.append(
-                WorktreeReport(
-                    dataset_path=subds.rel_path,
-                    source=subds.abs_path,
-                    destination=dest_subds,
-                    result=WorktreeResult.SKIPPED_DRY_RUN,
-                    branch=branch,
-                    message="Dry run: would create subdataset worktree",
-                )
+            yield WorktreeReport(
+                dataset_path=subds.rel_path,
+                source=subds.abs_path,
+                destination=dest_subds,
+                result=WorktreeResult.SKIPPED_DRY_RUN,
+                branch=branch,
             )
             continue
 
-        # Prepare destination (remove gitlinks / empty dirs from parent wt)
         _prepare_destination(dest_subds)
 
         wt_result, wt_msg = _git_worktree_add(
@@ -400,22 +366,11 @@ def create_nested_worktrees(
             force=force,
         )
 
-        result.reports.append(
-            WorktreeReport(
-                dataset_path=subds.rel_path,
-                source=subds.abs_path,
-                destination=dest_subds,
-                result=wt_result,
-                branch=branch,
-                message=wt_msg,
-            )
+        yield WorktreeReport(
+            dataset_path=subds.rel_path,
+            source=subds.abs_path,
+            destination=dest_subds,
+            result=wt_result,
+            branch=branch,
+            message=wt_msg,
         )
-
-        if wt_result == WorktreeResult.FAILED:
-            logger.error(
-                "Failed to create worktree for '%s': %s", subds.rel_path, wt_msg
-            )
-        else:
-            logger.info("Created worktree for '%s'", subds.rel_path)
-
-    return result

@@ -14,10 +14,22 @@ from datalad_worktree.core import (
     _branch_exists,
     _git_worktree_add,
     _prepare_destination,
+    collect_worktree_reports,
     create_nested_worktrees,
     validate_superds,
 )
 from tests.conftest import _git
+
+
+def _run_create(**kwargs) -> WorktreeCreateResult:
+    """Convenience wrapper: runs create_nested_worktrees and collects into a result."""
+    worktree_path = kwargs["worktree_path"]
+    branch = kwargs["branch"]
+    return collect_worktree_reports(
+        create_nested_worktrees(**kwargs),
+        worktree_root=worktree_path.resolve(),
+        branch=branch,
+    )
 
 
 # ── Unit tests ───────────────────────────────────────────────────────────────
@@ -116,7 +128,7 @@ class TestGitWorktreeAdd:
             datalad_ds, dest, "nonexistent", create_branch=False
         )
         assert result == WorktreeResult.FAILED
-        assert "create_branch=False" in msg
+        assert "--no-create-branch" in msg
 
 
 class TestWorktreeCreateResult:
@@ -177,16 +189,13 @@ class TestWorktreeCreateResult:
 # ── Integration tests ────────────────────────────────────────────────────────
 
 
-class TestCreateNestedWorktreesDatalad:
-    """Integration tests using the DataLad discovery backend."""
-
+class TestCreateNestedWorktrees:
     def test_dry_run(self, superds: dict):
-        result = create_nested_worktrees(
+        result = _run_create(
             superds_path=superds["super"],
             worktree_path=superds["wt_location"] / "test-wt",
             branch="test-branch",
             dry_run=True,
-            prefer_datalad=True,
         )
         assert result.all_ok
         assert all(
@@ -195,11 +204,10 @@ class TestCreateNestedWorktreesDatalad:
         assert not (superds["wt_location"] / "test-wt").exists()
 
     def test_creates_all_worktrees(self, superds: dict):
-        result = create_nested_worktrees(
+        result = _run_create(
             superds_path=superds["super"],
             worktree_path=superds["wt_location"] / "test-wt",
             branch="feat/test",
-            prefer_datalad=True,
         )
         assert result.all_ok
 
@@ -211,11 +219,10 @@ class TestCreateNestedWorktreesDatalad:
         assert (wt_root / "sub-01" / "derivatives" / ".git").exists()
 
     def test_report_counts(self, superds: dict):
-        result = create_nested_worktrees(
+        result = _run_create(
             superds_path=superds["super"],
             worktree_path=superds["wt_location"] / "test-wt",
             branch="feat/counts",
-            prefer_datalad=True,
         )
         # super + sub-01 + sub-01/derivatives + sub-02 = 4 reports
         assert len(result.reports) == 4
@@ -224,11 +231,10 @@ class TestCreateNestedWorktreesDatalad:
 
     def test_worktree_branches_correct(self, superds: dict):
         branch = "feat/verify-branch"
-        result = create_nested_worktrees(
+        result = _run_create(
             superds_path=superds["super"],
             worktree_path=superds["wt_location"] / "test-wt",
             branch=branch,
-            prefer_datalad=True,
         )
         assert result.all_ok
 
@@ -238,84 +244,37 @@ class TestCreateNestedWorktreesDatalad:
             assert out.stdout.strip() == branch
 
 
-class TestCreateNestedWorktreesGitmodules:
-    """Integration tests using the .gitmodules fallback backend."""
-
-    def test_dry_run(self, superds: dict):
-        result = create_nested_worktrees(
-            superds_path=superds["super"],
-            worktree_path=superds["wt_location"] / "test-wt",
-            branch="test-branch",
-            dry_run=True,
-            prefer_datalad=False,
-        )
-        assert result.all_ok
-        assert all(
-            r.result == WorktreeResult.SKIPPED_DRY_RUN for r in result.reports
-        )
-        assert not (superds["wt_location"] / "test-wt").exists()
-
-    def test_creates_all_worktrees(self, superds: dict):
-        result = create_nested_worktrees(
-            superds_path=superds["super"],
-            worktree_path=superds["wt_location"] / "test-wt",
-            branch="feat/test",
-            prefer_datalad=False,
-        )
-        assert result.all_ok
-
-        wt_root = superds["wt_location"] / "test-wt"
-        assert wt_root.is_dir()
-        assert (wt_root / ".git").exists()
-        assert (wt_root / "sub-01" / ".git").exists()
-        assert (wt_root / "sub-02" / ".git").exists()
-        assert (wt_root / "sub-01" / "derivatives" / ".git").exists()
-
-    def test_report_counts(self, superds: dict):
-        result = create_nested_worktrees(
-            superds_path=superds["super"],
-            worktree_path=superds["wt_location"] / "test-wt",
-            branch="feat/counts",
-            prefer_datalad=False,
-        )
-        assert len(result.reports) == 4
-        assert len(result.succeeded) == 4
-        assert len(result.failed) == 0
-
-
 class TestCreateNestedWorktreesEdgeCases:
     def test_existing_root_without_force_fails(self, superds: dict):
         wt_root = superds["wt_location"] / "test-wt"
         wt_root.mkdir(parents=True)
         (wt_root / "file.txt").write_text("block")
 
-        result = create_nested_worktrees(
+        result = _run_create(
             superds_path=superds["super"],
             worktree_path=superds["wt_location"] / "test-wt",
             branch="feat/block",
-            prefer_datalad=False,
         )
         assert not result.all_ok
         assert result.failed[0].result == WorktreeResult.FAILED
         assert "already exists" in result.failed[0].message
 
     def test_no_create_branch(self, superds: dict):
-        result = create_nested_worktrees(
+        result = _run_create(
             superds_path=superds["super"],
             worktree_path=superds["wt_location"] / "test-wt",
             branch="nonexistent/branch",
             create_branch=False,
-            prefer_datalad=False,
         )
         assert not result.all_ok
 
     def test_not_a_repo_raises(self, tmp_path: Path):
         with pytest.raises(ValueError, match="Not a git repository"):
-            create_nested_worktrees(
+            list(create_nested_worktrees(
                 superds_path=tmp_path,
                 worktree_path=tmp_path / "wt" / "n",
                 branch="b",
-            )
+            ))
 
     def test_uninstalled_subdataset_skipped(self, superds: dict):
         """An uninstalled subdataset is skipped, not fatal."""
@@ -325,36 +284,11 @@ class TestCreateNestedWorktreesEdgeCases:
         elif git_entry.is_dir():
             shutil.rmtree(git_entry)
 
-        result = create_nested_worktrees(
+        result = _run_create(
             superds_path=superds["super"],
             worktree_path=superds["wt_location"] / "test-wt",
             branch="feat/skip",
-            prefer_datalad=False,
         )
         assert result.all_ok  # skips are not failures
         skipped = [r for r in result.reports if r.dataset_path == "sub-02"]
         assert skipped[0].result == WorktreeResult.SKIPPED_NOT_INSTALLED
-
-    def test_both_backends_produce_same_worktrees(self, superds: dict, tmp_path: Path):
-        """DataLad and gitmodules backends create the same worktree structure."""
-        wt_dl = tmp_path / "wt-datalad"
-        wt_gm = tmp_path / "wt-gitmodules"
-
-        r_dl = create_nested_worktrees(
-            superds_path=superds["super"],
-            worktree_path=wt_dl / "wt",
-            branch="feat/compare-dl",
-            prefer_datalad=True,
-        )
-        r_gm = create_nested_worktrees(
-            superds_path=superds["super"],
-            worktree_path=wt_gm / "wt",
-            branch="feat/compare-gm",
-            prefer_datalad=False,
-        )
-
-        assert r_dl.all_ok
-        assert r_gm.all_ok
-        assert sorted(r.dataset_path for r in r_dl.reports) == sorted(
-            r.dataset_path for r in r_gm.reports
-        )
