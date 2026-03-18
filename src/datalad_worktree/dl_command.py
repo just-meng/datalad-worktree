@@ -1,8 +1,5 @@
 """
-DataLad command interface for worktree.
-
-This allows calling the tool as:
-  datalad worktree <worktree-path> <branch>
+DataLad command interfaces for worktree-add, worktree-list, worktree-remove.
 
 Requires DataLad to be installed.
 """
@@ -23,33 +20,38 @@ try:
     from datalad.support.param import Parameter
     from datalad.ui import ui
 
+    # ── worktree-add ─────────────────────────────────────────────────────
+
     @build_doc
-    class WorktreeCreate(Interface):
+    class WorktreeAdd(Interface):
         """Create nested git worktrees for a DataLad dataset hierarchy.
 
-        This command creates a git worktree for the superdataset and every
-        installed subdataset, mirroring the nested structure under a new
-        root directory. Each worktree checks out (or creates) the specified
+        Creates a git worktree for the superdataset and every installed
+        subdataset, mirroring the nested structure under a new root
+        directory. Each worktree checks out (or creates) the specified
         branch.
+
+        Runs a pre-flight check before creating anything. If any dataset
+        would fail (e.g. branch already checked out elsewhere), no
+        worktrees are created.
 
         Examples::
 
-            # Create worktrees under /tmp/wt/my-feature on branch 'feature/x'
-            datalad worktree /tmp/wt feature/x
+            # Create worktrees under /tmp/wt on branch 'feature/x'
+            datalad worktree-add /tmp/wt feature/x
 
             # Dry run
-            datalad worktree --dry-run /tmp/wt dev/experiment
+            datalad worktree-add --dry-run /tmp/wt dev/experiment
         """
 
         @staticmethod
         def custom_result_renderer(res, **kwargs):
-            if res["action"] != "worktree":
+            if res["action"] != "worktree-add":
                 default_result_renderer(res)
                 return
             status = res.get("status", "")
             dest = res.get("path", "")
-            dataset_path = res.get("dataset_path", "")
-            label = dataset_path or "."
+            label = res.get("dataset_path", "") or "."
             skip_reason = res.get("skip_reason", "")
             dry_run = res.get("dry_run", False)
 
@@ -69,9 +71,9 @@ try:
                         label, dest,
                     ))
                 else:
-                    ui.message("{}   {} -> {} ({})".format(
+                    ui.message("{}   {} ({})".format(
                         ac.color_word("skip", ac.YELLOW),
-                        label, dest, skip_reason,
+                        label, skip_reason,
                     ))
             else:
                 ui.message("{} {}: {}".format(
@@ -87,7 +89,7 @@ try:
             dry_run_count = 0
             is_dry_run = False
             for res in results:
-                if res.get("action") != "worktree":
+                if res.get("action") != "worktree-add":
                     continue
                 if worktree_root is None and res.get("worktree_root"):
                     worktree_root = res["worktree_root"]
@@ -158,10 +160,8 @@ try:
         ):
             from datalad.distribution.dataset import require_dataset
 
-            from datalad_worktree.core import (
-                WorktreeResult,
-                create_nested_worktrees,
-            )
+            from datalad_worktree.add import create_nested_worktrees
+            from datalad_worktree.core import WorktreeResult
 
             ds = require_dataset(
                 dataset,
@@ -190,7 +190,6 @@ try:
                 else:
                     status = "error"
 
-                # Determine skip reason for display
                 skip_reason = ""
                 if report.result == WorktreeResult.SKIPPED_NOT_INSTALLED:
                     skip_reason = "not installed"
@@ -198,7 +197,7 @@ try:
                     skip_reason = "not a git repo"
 
                 yield get_status_dict(
-                    action="worktree",
+                    action="worktree-add",
                     ds=ds,
                     path=str(report.destination),
                     status=status,
@@ -213,14 +212,238 @@ try:
                     type="dataset",
                 )
 
+    # ── worktree-list ────────────────────────────────────────────────────
+
+    @build_doc
+    class WorktreeList(Interface):
+        """List all worktrees across a DataLad dataset hierarchy.
+
+        Shows all git worktrees for the superdataset and every installed
+        subdataset. Only datasets with additional worktrees (beyond the
+        main working directory) are shown.
+
+        Examples::
+
+            datalad worktree-list
+            datalad worktree-list -d /data/my-superdataset
+        """
+
+        @staticmethod
+        def custom_result_renderer(res, **kwargs):
+            if res["action"] != "worktree-list":
+                default_result_renderer(res)
+                return
+            label = res.get("dataset_path", ".")
+            wt_path = res.get("path", "")
+            branch = res.get("branch", "")
+            is_main = res.get("is_main", False)
+
+            branch_str = branch or "(detached)"
+            main_tag = ac.color_word(" (main)", ac.WHITE) if is_main else ""
+            ui.message("  {} [{}]{}".format(wt_path, branch_str, main_tag))
+
+        _params_ = dict(
+            dataset=Parameter(
+                args=("-d", "--dataset"),
+                doc="Path to the superdataset (default: current directory)",
+                constraints=EnsureStr() | EnsureNone(),
+            ),
+        )
+
+        @staticmethod
+        @eval_results
+        def __call__(dataset=None):
+            from datalad.distribution.dataset import require_dataset
+
+            from datalad_worktree.list_cmd import list_nested_worktrees
+
+            ds = require_dataset(
+                dataset,
+                check_installed=True,
+                purpose="list worktrees",
+            )
+
+            for ds_wt in list_nested_worktrees(Path(ds.path)):
+                extra_worktrees = [w for w in ds_wt.worktrees if not w.bare]
+                if len(extra_worktrees) <= 1:
+                    continue
+
+                for wt in extra_worktrees:
+                    is_main = wt.path.resolve() == ds_wt.source.resolve()
+                    yield get_status_dict(
+                        action="worktree-list",
+                        ds=ds,
+                        path=str(wt.path),
+                        status="ok",
+                        dataset_path=ds_wt.dataset_path,
+                        branch=wt.branch or "",
+                        commit=wt.commit,
+                        is_main=is_main,
+                        type="dataset",
+                    )
+
+    # ── worktree-remove ──────────────────────────────────────────────────
+
+    @build_doc
+    class WorktreeRemove(Interface):
+        """Remove nested worktrees by path or branch name.
+
+        Accepts either a worktree path or a branch name. Removes the
+        corresponding worktree from each dataset in the hierarchy.
+        Datasets that don't have a matching worktree are skipped.
+
+        Examples::
+
+            # Remove by path
+            datalad worktree-remove /tmp/wt/my-feature
+
+            # Remove by branch name
+            datalad worktree-remove feature/x
+
+            # Also delete the branch
+            datalad worktree-remove --delete-branch feature/x
+        """
+
+        @staticmethod
+        def custom_result_renderer(res, **kwargs):
+            if res["action"] != "worktree-remove":
+                default_result_renderer(res)
+                return
+            status = res.get("status", "")
+            label = res.get("dataset_path", ".")
+            dest = res.get("path", "")
+
+            if status == "ok":
+                if res.get("branch_deleted"):
+                    ui.message("{} {} branch '{}'".format(
+                        ac.color_word("remove", ac.GREEN),
+                        label, res.get("branch", ""),
+                    ))
+                else:
+                    ui.message("{} {} -> {}".format(
+                        ac.color_word("remove", ac.GREEN),
+                        label, dest,
+                    ))
+            elif status == "notneeded":
+                ui.message("{}   {} ({})".format(
+                    ac.color_word("skip", ac.YELLOW),
+                    label, res.get("message", ""),
+                ))
+            else:
+                ui.message("{} {}: {}".format(
+                    ac.color_word("error", ac.RED),
+                    label, res.get("message", ""),
+                ))
+
+        @staticmethod
+        def custom_result_summary_renderer(results):
+            removed = 0
+            skipped = 0
+            for res in results:
+                if res.get("action") != "worktree-remove":
+                    continue
+                if res.get("status") == "ok" and not res.get("branch_deleted"):
+                    removed += 1
+                elif res.get("status") == "notneeded":
+                    skipped += 1
+            parts = [f"{removed} removed"]
+            if skipped:
+                parts.append(f"{skipped} skipped")
+            ui.message(", ".join(parts))
+
+        _params_ = dict(
+            target=Parameter(
+                args=("target",),
+                doc="Worktree path or branch name to remove",
+                constraints=EnsureStr(),
+            ),
+            dataset=Parameter(
+                args=("-d", "--dataset"),
+                doc="Path to the superdataset (default: current directory)",
+                constraints=EnsureStr() | EnsureNone(),
+            ),
+            delete_branch=Parameter(
+                args=("--delete-branch",),
+                doc="Also delete the branch (safe delete; refuses if unmerged)",
+                action="store_true",
+                default=False,
+            ),
+            force=Parameter(
+                args=("-f", "--force"),
+                doc="Force removal even with uncommitted changes; "
+                    "force-delete branch",
+                action="store_true",
+                default=False,
+            ),
+        )
+
+        @staticmethod
+        @eval_results
+        def __call__(
+            target,
+            dataset=None,
+            delete_branch=False,
+            force=False,
+        ):
+            from datalad.distribution.dataset import require_dataset
+
+            from datalad_worktree.core import WorktreeResult
+            from datalad_worktree.remove import remove_nested_worktrees
+
+            ds = require_dataset(
+                dataset,
+                check_installed=True,
+                purpose="remove nested worktrees",
+            )
+
+            for report in remove_nested_worktrees(
+                superds_path=Path(ds.path),
+                target=target,
+                delete_branch=delete_branch,
+                force=force,
+            ):
+                if report.result == WorktreeResult.REMOVED:
+                    status = "ok"
+                elif report.result == WorktreeResult.REMOVED_BRANCH:
+                    status = "ok"
+                elif report.result == WorktreeResult.SKIPPED_NO_WORKTREE:
+                    status = "notneeded"
+                else:
+                    status = "error"
+
+                yield get_status_dict(
+                    action="worktree-remove",
+                    ds=ds,
+                    path=str(report.destination),
+                    status=status,
+                    message=report.message,
+                    dataset_path=report.dataset_path,
+                    branch=report.branch,
+                    branch_deleted=report.result == WorktreeResult.REMOVED_BRANCH,
+                    type="dataset",
+                )
+
 except ImportError:
     logger.debug(
-        "DataLad not available; datalad worktree command not registered"
+        "DataLad not available; datalad worktree commands not registered"
     )
 
-    class WorktreeCreate:
+    class WorktreeAdd:
         """Placeholder when DataLad is not installed."""
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError(
+                "DataLad is not installed. Use the standalone CLI: worktree"
+            )
 
+    class WorktreeList:
+        """Placeholder when DataLad is not installed."""
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError(
+                "DataLad is not installed. Use the standalone CLI: worktree"
+            )
+
+    class WorktreeRemove:
+        """Placeholder when DataLad is not installed."""
         def __call__(self, *args, **kwargs):
             raise RuntimeError(
                 "DataLad is not installed. Use the standalone CLI: worktree"

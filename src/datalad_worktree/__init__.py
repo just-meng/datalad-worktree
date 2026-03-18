@@ -1,17 +1,13 @@
-"""DataLad extension for creating nested git worktrees across dataset hierarchies."""
+"""DataLad extension for managing nested git worktrees across dataset hierarchies."""
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 # DataLad extension registration
-# This tuple tells datalad where to find the command suite:
-#   (description, list of (module_path, class_name, command_name))
 command_suite = (
-    "Create nested git worktrees for DataLad dataset hierarchies",
+    "Manage nested git worktrees for DataLad dataset hierarchies",
     [
-        (
-            "datalad_worktree.dl_command",
-            "WorktreeCreate",
-            "worktree",
-        ),
+        ("datalad_worktree.dl_command", "WorktreeAdd", "worktree-add"),
+        ("datalad_worktree.dl_command", "WorktreeList", "worktree-list"),
+        ("datalad_worktree.dl_command", "WorktreeRemove", "worktree-remove"),
     ],
 )

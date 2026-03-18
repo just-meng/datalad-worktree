@@ -2,8 +2,10 @@
 Command-line interface for datalad-worktree.
 
 Can be invoked as:
-  - ``worktree <worktree-path> <branch>``
-  - ``python -m datalad_worktree <worktree-path> <branch>``
+  - ``worktree add <worktree-path> <branch>``
+  - ``worktree list``
+  - ``worktree remove <path-or-branch>``
+  - ``python -m datalad_worktree ...``
 """
 
 from __future__ import annotations
@@ -11,13 +13,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from datalad_worktree.core import (
-    WorktreeReport,
-    WorktreeResult,
-    create_nested_worktrees,
-)
+from datalad_worktree.core import WorktreeReport, WorktreeResult
 
 # ─── ANSI colors ─────────────────────────────────────────────────────────────
+
+
 class _Colors:
     RED = "\033[0;31m"
     GREEN = "\033[0;32m"
@@ -31,6 +31,9 @@ class _Colors:
 
 
 C = _Colors
+
+
+# ─── Rendering ───────────────────────────────────────────────────────────────
 
 
 def _render_report(report: WorktreeReport) -> None:
@@ -47,10 +50,18 @@ def _render_report(report: WorktreeReport) -> None:
     elif report.result in (
         WorktreeResult.SKIPPED_NOT_INSTALLED,
         WorktreeResult.SKIPPED_NOT_GIT_REPO,
+        WorktreeResult.SKIPPED_NO_WORKTREE,
     ):
-        print(f"{C.YELLOW}skip{C.NC}   {label} -> {dest} {C.DIM}({report.message}){C.NC}")
+        print(f"{C.YELLOW}skip{C.NC}   {label} {C.DIM}({report.message}){C.NC}")
+    elif report.result == WorktreeResult.REMOVED:
+        print(f"{C.GREEN}remove{C.NC} {label} -> {dest}")
+    elif report.result == WorktreeResult.REMOVED_BRANCH:
+        print(f"{C.GREEN}remove{C.NC} {label} branch '{report.branch}'")
     elif report.result == WorktreeResult.FAILED:
         print(f"{C.RED}error{C.NC}  {label}: {report.message}", file=sys.stderr)
+
+
+# ─── Parser ──────────────────────────────────────────────────────────────────
 
 
 def build_parser():
@@ -58,53 +69,7 @@ def build_parser():
 
     parser = argparse.ArgumentParser(
         prog="worktree",
-        description=(
-            "Create nested git worktrees for DataLad dataset hierarchies.\n\n"
-            "Run from the root of a DataLad superdataset. This tool discovers\n"
-            "all subdatasets and creates a matching worktree tree at the\n"
-            "specified location."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "Examples:\n"
-            "  %(prog)s /tmp/worktrees/my-feature feature/new-analysis\n"
-            "  %(prog)s --dry-run ~/wt/experiment1 experiment/baseline\n"
-            "  %(prog)s --force --no-create-branch /wt/hotfix release/1.0\n"
-        ),
-    )
-
-    parser.add_argument(
-        "worktree_path",
-        type=Path,
-        help="Path for the superdataset worktree (parent dir + name)",
-    )
-    parser.add_argument(
-        "branch",
-        help="Branch name to create/checkout in every worktree",
-    )
-    parser.add_argument(
-        "-n", "--dry-run",
-        action="store_true",
-        default=False,
-        help="Show what would be done without doing it",
-    )
-    parser.add_argument(
-        "-f", "--force",
-        action="store_true",
-        default=False,
-        help="Pass --force to git worktree add",
-    )
-    parser.add_argument(
-        "--no-create-branch",
-        action="store_true",
-        default=False,
-        help="Don't create new branches; only checkout existing ones",
-    )
-    parser.add_argument(
-        "--dataset", "-d",
-        type=Path,
-        default=None,
-        help="Path to the superdataset root (default: current directory)",
+        description="Manage nested git worktrees for DataLad dataset hierarchies.",
     )
     parser.add_argument(
         "--no-color",
@@ -113,18 +78,80 @@ def build_parser():
         help="Disable colored output",
     )
 
+    sub = parser.add_subparsers(dest="command")
+
+    # ── add ──────────────────────────────────────────────────────────────
+    add_p = sub.add_parser(
+        "add",
+        help="Create nested worktrees for all datasets",
+    )
+    add_p.add_argument(
+        "worktree_path", type=Path,
+        help="Path for the superdataset worktree",
+    )
+    add_p.add_argument(
+        "branch",
+        help="Branch name to create/checkout in every worktree",
+    )
+    add_p.add_argument(
+        "-n", "--dry-run", action="store_true", default=False,
+        help="Show what would be done without doing it",
+    )
+    add_p.add_argument(
+        "-f", "--force", action="store_true", default=False,
+        help="Pass --force to git worktree add",
+    )
+    add_p.add_argument(
+        "--no-create-branch", action="store_true", default=False,
+        help="Don't create new branches; only checkout existing ones",
+    )
+    add_p.add_argument(
+        "-d", "--dataset", type=Path, default=None,
+        help="Path to the superdataset root (default: current directory)",
+    )
+
+    # ── list ─────────────────────────────────────────────────────────────
+    list_p = sub.add_parser(
+        "list",
+        help="List all worktrees for all datasets in the hierarchy",
+    )
+    list_p.add_argument(
+        "-d", "--dataset", type=Path, default=None,
+        help="Path to the superdataset root (default: current directory)",
+    )
+
+    # ── remove ───────────────────────────────────────────────────────────
+    rm_p = sub.add_parser(
+        "remove",
+        help="Remove nested worktrees by path or branch name",
+    )
+    rm_p.add_argument(
+        "target",
+        help="Worktree path or branch name to remove",
+    )
+    rm_p.add_argument(
+        "--delete-branch", action="store_true", default=False,
+        help="Also delete the branch (safe delete; refuses if unmerged)",
+    )
+    rm_p.add_argument(
+        "-f", "--force", action="store_true", default=False,
+        help="Force removal even with uncommitted changes; force-delete branch",
+    )
+    rm_p.add_argument(
+        "-d", "--dataset", type=Path, default=None,
+        help="Path to the superdataset root (default: current directory)",
+    )
+
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+# ─── Subcommand handlers ────────────────────────────────────────────────────
 
-    if args.no_color or not sys.stdout.isatty():
-        _Colors.disable()
 
-    superds_path = args.dataset if args.dataset else Path.cwd()
-    superds_path = superds_path.resolve()
+def _cmd_add(args) -> int:
+    from datalad_worktree.add import create_nested_worktrees
+
+    superds_path = (args.dataset or Path.cwd()).resolve()
     worktree_path = args.worktree_path.resolve()
 
     try:
@@ -155,7 +182,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
         return 1
 
-    # ── Summary ──────────────────────────────────────────────────────────
     has_failures = any(r.result == WorktreeResult.FAILED for r in reports)
 
     if args.dry_run:
@@ -173,6 +199,95 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{', '.join(parts)} at {worktree_path}")
 
     return 1 if has_failures else 0
+
+
+def _cmd_list(args) -> int:
+    from datalad_worktree.list_cmd import list_nested_worktrees
+
+    superds_path = (args.dataset or Path.cwd()).resolve()
+
+    try:
+        results = list_nested_worktrees(superds_path)
+    except ValueError as e:
+        print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
+        return 1
+
+    for ds_wt in results:
+        # Skip datasets with only the main worktree (the repo itself)
+        extra_worktrees = [w for w in ds_wt.worktrees if not w.bare]
+        if len(extra_worktrees) <= 1:
+            continue
+
+        print(f"{C.GREEN}{ds_wt.dataset_path}{C.NC}")
+        for wt in extra_worktrees:
+            branch_str = wt.branch or f"{C.DIM}(detached){C.NC}"
+            # Mark the main worktree
+            if wt.path.resolve() == ds_wt.source.resolve():
+                print(f"  {wt.path} [{branch_str}] {C.DIM}(main){C.NC}")
+            else:
+                print(f"  {wt.path} [{branch_str}]")
+
+    return 0
+
+
+def _cmd_remove(args) -> int:
+    from datalad_worktree.remove import remove_nested_worktrees
+
+    superds_path = (args.dataset or Path.cwd()).resolve()
+
+    try:
+        reports: list[WorktreeReport] = []
+        removed = 0
+        skipped = 0
+        for report in remove_nested_worktrees(
+            superds_path=superds_path,
+            target=args.target,
+            delete_branch=args.delete_branch,
+            force=args.force,
+        ):
+            reports.append(report)
+            _render_report(report)
+            if report.result == WorktreeResult.REMOVED:
+                removed += 1
+            elif report.result == WorktreeResult.SKIPPED_NO_WORKTREE:
+                skipped += 1
+    except ValueError as e:
+        print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
+        return 1
+
+    has_failures = any(r.result == WorktreeResult.FAILED for r in reports)
+
+    parts = [f"{removed} removed"]
+    if skipped:
+        parts.append(f"{skipped} skipped")
+    print(f"\n{', '.join(parts)}")
+
+    return 1 if has_failures else 0
+
+
+# ─── Main ────────────────────────────────────────────────────────────────────
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.no_color or not sys.stdout.isatty():
+        _Colors.disable()
+
+    if args.command is None:
+        parser.print_help()
+        return 1
+
+    if args.command == "add":
+        return _cmd_add(args)
+    elif args.command == "list":
+        return _cmd_list(args)
+    elif args.command == "remove":
+        return _cmd_remove(args)
+
+    parser.print_help()
+    return 1
 
 
 if __name__ == "__main__":
