@@ -14,7 +14,8 @@ authors = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+datalad = ["datalad"]
+dev = ["pytest>=7", "datalad"]
 
 [project.scripts]
 worktree = "datalad_worktree.cli:main"
