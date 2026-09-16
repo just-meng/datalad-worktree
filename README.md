@@ -149,7 +149,7 @@ Containers whose `cmdexec` has no `{img}` to anchor the insertion are skipped wi
 
 ### List
 
-Shows worktrees grouped by branch. Main worktrees are listed first under the superdataset's branch, followed by each extra branch as a separate section.
+Shows worktrees grouped by branch. Main worktrees are listed first under the superdataset's branch, followed by each extra branch as a separate section. Each dataset is pruned first, so a worktree directory removed some other way (e.g. `rm -rf` instead of `worktree delete`) drops out of the listing instead of lingering as a stale entry.
 
 ### Delete
 
