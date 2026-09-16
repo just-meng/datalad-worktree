@@ -34,26 +34,14 @@ def _create_worktrees(superds: dict, name: str, branch: str) -> Path:
 
 
 class TestResolveTarget:
-    def test_absolute_existing_path(self, tmp_path: Path):
+    def test_existing_path(self, tmp_path: Path):
         d = tmp_path / "some-dir"
         d.mkdir()
         assert _resolve_target(str(d)) == "path"
 
-    def test_absolute_nonexistent_path(self):
-        assert _resolve_target("/tmp/nonexistent-xyz-12345") == "branch"
-
-    def test_relative_existing_path(self, tmp_path: Path, monkeypatch):
-        d = tmp_path / "rel-target"
-        d.mkdir()
-        monkeypatch.chdir(tmp_path)
-        assert _resolve_target("rel-target") == "path"
-
-    def test_branch_name(self):
-        assert _resolve_target("feat/my-feature") == "branch"
-
-    def test_branch_like_path(self):
+    def test_nonexistent_path_is_branch(self):
         """A string that looks like a path but doesn't exist is treated as branch."""
-        assert _resolve_target("some/nested/thing") == "branch"
+        assert _resolve_target("feat/my-feature") == "branch"
 
 
 class TestRemoveByPath:

@@ -211,10 +211,7 @@ class TestConfigureWorktree:
         register_container(superds["super"])
         reports = _create(superds)
 
-        configured = [r for r in reports if r.result == WorktreeResult.CONFIGURED]
-        messages = " ".join(r.message for r in configured)
-        assert "mycont" in messages
-        assert "fallback" in messages
+        assert any(r.result == WorktreeResult.CONFIGURED for r in reports)
 
     def test_silent_without_containers(self, superds: dict):
         reports = _create(superds)

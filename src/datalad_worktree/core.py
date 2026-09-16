@@ -6,8 +6,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 
@@ -53,59 +52,6 @@ class WorktreeReport:
     result: WorktreeResult
     branch: str
     message: str = ""
-
-
-@dataclass
-class WorktreeCreateResult:
-    """Aggregate result for the entire nested worktree creation."""
-    worktree_root: Path
-    branch: str
-    reports: list[WorktreeReport] = field(default_factory=list)
-
-    @property
-    def succeeded(self) -> list[WorktreeReport]:
-        return [
-            r for r in self.reports
-            if r.result in (WorktreeResult.CREATED, WorktreeResult.CREATED_NEW_BRANCH)
-        ]
-
-    @property
-    def skipped(self) -> list[WorktreeReport]:
-        return [r for r in self.reports if r.result in SKIPPED_RESULTS]
-
-    @property
-    def failed(self) -> list[WorktreeReport]:
-        return [r for r in self.reports if r.result == WorktreeResult.FAILED]
-
-    @property
-    def all_ok(self) -> bool:
-        return len(self.failed) == 0
-
-    def summary(self) -> str:
-        lines = [
-            f"Nested worktree creation summary:",
-            f"  Root:       {self.worktree_root}",
-            f"  Branch:     {self.branch}",
-            f"  Succeeded:  {len(self.succeeded)}",
-            f"  Skipped:    {len(self.skipped)}",
-            f"  Failed:     {len(self.failed)}",
-        ]
-        if self.failed:
-            lines.append("  Failures:")
-            for r in self.failed:
-                lines.append(f"    ✗ {r.dataset_path}: {r.message}")
-        return "\n".join(lines)
-
-
-def collect_worktree_reports(
-    reports: Iterable[WorktreeReport],
-    worktree_root: Path,
-    branch: str,
-) -> WorktreeCreateResult:
-    """Collect an iterable of WorktreeReport into a WorktreeCreateResult."""
-    result = WorktreeCreateResult(worktree_root=worktree_root, branch=branch)
-    result.reports = [r for r in reports if r.result != WorktreeResult.STARTING]
-    return result
 
 
 # ── Validation ───────────────────────────────────────────────────────────────

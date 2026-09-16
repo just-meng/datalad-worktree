@@ -7,9 +7,6 @@ from pathlib import Path
 import pytest
 
 from datalad_worktree.core import (
-    WorktreeCreateResult,
-    WorktreeReport,
-    WorktreeResult,
     git_branch_checked_out_at,
     git_branch_exists,
     git_worktree_list,
@@ -59,68 +56,13 @@ class TestGitWorktreeList:
 
 class TestGitBranchCheckedOutAt:
     def test_branch_checked_out(self, datalad_ds: Path):
-        # The main worktree has some branch checked out
         result = _git(datalad_ds, "branch", "--show-current")
         current_branch = result.stdout.strip()
-        if current_branch:
-            conflict = git_branch_checked_out_at(datalad_ds, current_branch)
-            assert conflict is not None
+        assert current_branch, "expected datalad_ds fixture to leave a named branch checked out"
+
+        conflict = git_branch_checked_out_at(datalad_ds, current_branch)
+        assert conflict is not None
 
     def test_branch_not_checked_out(self, datalad_ds: Path):
         _git(datalad_ds, "branch", "unused-branch")
         assert git_branch_checked_out_at(datalad_ds, "unused-branch") is None
-
-
-class TestWorktreeCreateResult:
-    def _make_report(self, result: WorktreeResult) -> WorktreeReport:
-        return WorktreeReport(
-            dataset_path="test",
-            source=Path("/src"),
-            destination=Path("/dst"),
-            result=result,
-            branch="main",
-        )
-
-    def test_succeeded(self):
-        r = WorktreeCreateResult(worktree_root=Path("/wt"), branch="main")
-        r.reports = [
-            self._make_report(WorktreeResult.CREATED),
-            self._make_report(WorktreeResult.CREATED_NEW_BRANCH),
-            self._make_report(WorktreeResult.FAILED),
-        ]
-        assert len(r.succeeded) == 2
-
-    def test_failed(self):
-        r = WorktreeCreateResult(worktree_root=Path("/wt"), branch="main")
-        r.reports = [
-            self._make_report(WorktreeResult.CREATED),
-            self._make_report(WorktreeResult.FAILED),
-        ]
-        assert len(r.failed) == 1
-
-    def test_skipped(self):
-        r = WorktreeCreateResult(worktree_root=Path("/wt"), branch="main")
-        r.reports = [
-            self._make_report(WorktreeResult.SKIPPED_DRY_RUN),
-            self._make_report(WorktreeResult.SKIPPED_NOT_INSTALLED),
-            self._make_report(WorktreeResult.CREATED),
-        ]
-        assert len(r.skipped) == 2
-
-    def test_all_ok_true(self):
-        r = WorktreeCreateResult(worktree_root=Path("/wt"), branch="main")
-        r.reports = [self._make_report(WorktreeResult.CREATED)]
-        assert r.all_ok is True
-
-    def test_all_ok_false(self):
-        r = WorktreeCreateResult(worktree_root=Path("/wt"), branch="main")
-        r.reports = [self._make_report(WorktreeResult.FAILED)]
-        assert r.all_ok is False
-
-    def test_summary_contains_key_info(self):
-        r = WorktreeCreateResult(worktree_root=Path("/wt"), branch="main")
-        r.reports = [self._make_report(WorktreeResult.CREATED)]
-        s = r.summary()
-        assert "Succeeded:" in s
-        assert "/wt" in s
-        assert "main" in s

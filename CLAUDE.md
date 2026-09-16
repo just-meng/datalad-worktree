@@ -75,7 +75,6 @@ uv run --extra dev pytest
 
 - `WorktreeResult` (enum): `CREATED`, `CREATED_NEW_BRANCH`, `SKIPPED_NOT_INSTALLED`, `SKIPPED_NOT_GIT_REPO`, `SKIPPED_DRY_RUN`, `SKIPPED_NO_WORKTREE`, `SKIPPED_CONTAINER`, `CONFIGURED`, `REMOVED`, `REMOVED_BRANCH`, `FAILED`
 - `WorktreeReport` (dataclass): one per dataset, holds source, destination, result, branch, message
-- `WorktreeCreateResult` (dataclass): aggregates reports, provides `.succeeded`, `.skipped`, `.failed`, `.all_ok`, `.summary()`
 - `SubDataset` (dataclass in `discovery.py`): holds `rel_path`, `abs_path`, `installed`, `depth`
 - `GitWorktreeEntry` (dataclass in `core.py`): parsed from `git worktree list --porcelain`
 - `DatasetWorktrees` (dataclass in `list_cmd.py`): groups worktree entries by dataset
