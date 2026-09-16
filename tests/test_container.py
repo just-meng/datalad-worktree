@@ -5,8 +5,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from datalad_worktree.add import create_nested_worktrees
 from datalad_worktree.container import (
     PLACEHOLDER,
