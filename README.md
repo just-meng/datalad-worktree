@@ -164,6 +164,18 @@ Shows worktrees grouped by branch. Main worktrees are listed first under the sup
 - git (on PATH)
 - [DataLad](https://www.datalad.org/) (optional; enables `datalad worktree-*` commands)
 
+## Contributing
+
+```bash
+git clone https://github.com/just-meng/datalad-worktree.git
+cd datalad-worktree
+uv sync --dev
+uv run pytest
+uv run ruff check .
+```
+
+Worktrees of annexed repos and `datalad containers-run` don't work on Windows, so the full test suite needs Linux (or WSL). Pull requests welcome.
+
 ## License
 
 MIT
