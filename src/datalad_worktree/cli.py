@@ -91,7 +91,7 @@ def build_parser():
         "--no-color",
         action="store_true",
         default=False,
-        help="Disable colored output",
+        help="disable colored output",
     )
 
     sub = parser.add_subparsers(dest="command")
@@ -99,71 +99,71 @@ def build_parser():
     # ── add ──────────────────────────────────────────────────────────────
     add_p = sub.add_parser(
         "add",
-        help="Create nested worktrees for all datasets",
+        help="create nested worktrees for all datasets",
     )
     add_p.add_argument(
         "worktree_path", type=Path,
-        help="Path for the superdataset worktree",
+        help="path for the superdataset worktree",
     )
     add_p.add_argument(
         "branch",
-        help="Branch name to create/checkout in every worktree",
+        help="branch name to create/checkout in every worktree",
     )
     add_p.add_argument(
         "-n", "--dry-run", action="store_true", default=False,
-        help="Show what would be done without doing it",
+        help="show what would be done without doing it",
     )
     add_p.add_argument(
         "-f", "--force", action="store_true", default=False,
-        help="Pass --force to git worktree add",
+        help="pass --force to git worktree add",
     )
     add_p.add_argument(
         "--no-create-branch", action="store_true", default=False,
-        help="Don't create new branches; only checkout existing ones",
+        help="don't create new branches; only checkout existing ones",
     )
     add_p.add_argument(
         "--no-bindpaths", action="store_true", default=False,
-        help="Don't configure container bind mounts for datalad containers-run",
+        help="don't configure container bind mounts for datalad containers-run",
     )
     add_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
-        help="Path to the superdataset root (default: current directory)",
+        help="path to the superdataset root (default: current directory)",
     )
 
     # ── list ─────────────────────────────────────────────────────────────
     list_p = sub.add_parser(
         "list",
-        help="List all worktrees for all datasets in the hierarchy",
+        help="list all worktrees for all datasets in the hierarchy",
     )
     list_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
-        help="Path to the superdataset root (default: current directory)",
+        help="path to the superdataset root (default: current directory)",
     )
 
     # ── delete ───────────────────────────────────────────────────────────
     del_p = sub.add_parser(
         "delete",
-        help="Delete nested worktrees by path or branch name",
+        help="delete nested worktrees by path or branch name",
     )
     del_p.add_argument(
         "target",
-        help="Worktree path or branch name to delete",
+        help="worktree path or branch name to delete",
     )
     del_p.add_argument(
         "--delete-branch", action="store_true", default=False,
-        help="Also delete the branch (safe delete; refuses if unmerged)",
+        help="also delete the branch (safe delete; refuses if unmerged)",
     )
     del_p.add_argument(
         "-f", "--force", action="store_true", default=False,
-        help="Force deletion even with uncommitted changes; force-delete branch",
+        help="force deletion even with uncommitted changes; force-delete branch",
     )
     del_p.add_argument(
         "-y", "--yes", action="store_true", default=False,
-        help="Skip confirmation prompt",
+        help="skip confirmation prompt",
     )
     del_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
-        help="Path to the superdataset root (default: current directory)",
+        help="path to the superdataset root (default: current directory)",
     )
 
     return parser
@@ -318,7 +318,7 @@ def _cmd_delete(args) -> int:
 
     if not args.yes:
         try:
-            answer = input(f"\nProceed? [y/N] ")
+            answer = input("\nProceed? [y/N] ")
         except (EOFError, KeyboardInterrupt):
             print()
             return 1
