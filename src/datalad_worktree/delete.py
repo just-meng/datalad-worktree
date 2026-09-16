@@ -15,6 +15,7 @@ from datalad_worktree.core import (
     WorktreeReport,
     WorktreeResult,
     git_worktree_list,
+    git_worktree_prune,
     validate_superds,
 )
 from datalad_worktree.discovery import discover_subdatasets, is_git_repo
@@ -74,19 +75,10 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
             shutil.rmtree(wt)
         except OSError as e:
             return f"failed to delete {wt}: {e}"
-        _git_worktree_prune(repo_path)
+        git_worktree_prune(repo_path)
         return ""
 
     return result.stderr.strip()
-
-
-def _git_worktree_prune(repo_path: Path) -> None:
-    """Run `git worktree prune`."""
-    subprocess.run(
-        ["git", "-C", str(repo_path), "worktree", "prune"],
-        capture_output=True,
-        text=True,
-    )
 
 
 def _git_branch_delete(repo_path: Path, branch: str, force: bool = False) -> str:
@@ -275,4 +267,4 @@ def delete_nested_worktrees(
     # Prune all repos
     all_repos = {t.repo_path for t in targets}
     for repo_path in all_repos:
-        _git_worktree_prune(repo_path)
+        git_worktree_prune(repo_path)

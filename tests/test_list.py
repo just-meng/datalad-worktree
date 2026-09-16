@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from datalad_worktree.add import create_nested_worktrees
@@ -89,4 +90,19 @@ class TestListNestedWorktrees:
             # main + feat/a + feat/b = 3
             assert len(non_bare) == 3, (
                 f"{ds_wt.dataset_path} has {len(non_bare)} worktrees, expected 3"
+            )
+
+    def test_prunes_externally_deleted_worktree(self, superds: dict):
+        """A worktree directory removed outside the tool (e.g. `rm -rf`
+        instead of `worktree delete`) drops out of the listing instead of
+        lingering as a stale entry."""
+        wt_path = _create_worktrees(superds, "prune-test", "feat/prune")
+
+        shutil.rmtree(wt_path)
+
+        results = list_nested_worktrees(superds["super"])
+        for ds_wt in results:
+            non_bare = [w for w in ds_wt.worktrees if not w.bare]
+            assert len(non_bare) == 1, (
+                f"{ds_wt.dataset_path} still lists a stale worktree: {non_bare}"
             )

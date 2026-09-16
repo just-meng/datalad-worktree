@@ -12,6 +12,7 @@ from pathlib import Path
 from datalad_worktree.core import (
     GitWorktreeEntry,
     git_worktree_list,
+    git_worktree_prune,
     validate_superds,
 )
 from datalad_worktree.discovery import discover_subdatasets, is_git_repo
@@ -31,6 +32,10 @@ def list_nested_worktrees(
     """
     List all worktrees for the superdataset and all installed subdatasets.
 
+    Prunes each dataset first, so a worktree directory removed some other
+    way (e.g. ``rm -rf`` instead of ``worktree delete``) drops out of the
+    listing instead of lingering as a stale entry.
+
     Returns
     -------
     list[DatasetWorktrees]
@@ -41,6 +46,7 @@ def list_nested_worktrees(
     results: list[DatasetWorktrees] = []
 
     # Superdataset
+    git_worktree_prune(superds_path)
     results.append(DatasetWorktrees(
         dataset_path=".",
         source=superds_path,
@@ -51,6 +57,7 @@ def list_nested_worktrees(
     for subds in discover_subdatasets(superds_path):
         if not subds.installed or not is_git_repo(subds.abs_path):
             continue
+        git_worktree_prune(subds.abs_path)
         results.append(DatasetWorktrees(
             dataset_path=subds.rel_path,
             source=subds.abs_path,
