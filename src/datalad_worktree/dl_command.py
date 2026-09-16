@@ -199,9 +199,7 @@ try:
                 if report.result == WorktreeResult.STARTING:
                     # Progress indicator — render directly, don't yield
                     # as a DataLad result (it's not a final state)
-                    ui.message("  ...  {}".format(
-                        report.dataset_path,
-                    ))
+                    ui.message(f"  ...  {report.dataset_path}")
                     continue
 
                 if report.result in (
@@ -294,7 +292,7 @@ try:
                     annotation = ""
                     if branch != super_branch:
                         annotation = ac.color_word(
-                            " ({})".format(branch), ac.WHITE,
+                            f" ({branch})", ac.WHITE,
                         )
                     ui.message("  {:<{}}{}{}".format(
                         ds_path, col_width, wt_path, annotation,
