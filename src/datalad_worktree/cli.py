@@ -62,8 +62,11 @@ def _render_report(report: WorktreeReport) -> None:
         WorktreeResult.SKIPPED_NOT_INSTALLED,
         WorktreeResult.SKIPPED_NOT_GIT_REPO,
         WorktreeResult.SKIPPED_NO_WORKTREE,
+        WorktreeResult.SKIPPED_CONTAINER,
     ):
         print(f"{C.YELLOW}skip{C.NC}   {label} {C.DIM}({report.message}){C.NC}")
+    elif report.result == WorktreeResult.CONFIGURED:
+        print(f"{C.GREEN}config{C.NC} {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.REMOVED:
         print(f"{C.GREEN}remove{C.NC} {label} -> {dest}")
     elif report.result == WorktreeResult.REMOVED_BRANCH:
@@ -117,6 +120,10 @@ def build_parser():
     add_p.add_argument(
         "--no-create-branch", action="store_true", default=False,
         help="Don't create new branches; only checkout existing ones",
+    )
+    add_p.add_argument(
+        "--no-bindpaths", action="store_true", default=False,
+        help="Don't configure container bind mounts for datalad containers-run",
     )
     add_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
@@ -182,6 +189,7 @@ def _cmd_add(args) -> int:
             create_branch=not args.no_create_branch,
             force=args.force,
             dry_run=args.dry_run,
+            configure_containers=not args.no_bindpaths,
         ):
             _render_report(report)
             if report.result == WorktreeResult.STARTING:

@@ -55,7 +55,12 @@ try:
             skip_reason = res.get("skip_reason", "")
             dry_run = res.get("dry_run", False)
 
-            if status == "ok":
+            if res.get("container_config"):
+                ui.message("{} {} ({})".format(
+                    ac.color_word("config", ac.GREEN),
+                    label, res.get("message", ""),
+                ))
+            elif status == "ok":
                 extra = ""
                 if res.get("new_branch"):
                     extra = ac.color_word(" (new branch)", ac.YELLOW)
@@ -95,6 +100,8 @@ try:
                     worktree_root = res["worktree_root"]
                 if res.get("dry_run"):
                     is_dry_run = True
+                if res.get("container"):
+                    continue  # not a worktree, don't count it as one
                 if res.get("status") == "ok":
                     created += 1
                 if res.get("status") == "notneeded":
@@ -146,6 +153,13 @@ try:
                 action="store_true",
                 default=False,
             ),
+            no_bindpaths=Parameter(
+                args=("--no-bindpaths",),
+                doc="""Don't configure container bind mounts for
+                datalad containers-run""",
+                action="store_true",
+                default=False,
+            ),
         )
 
         @staticmethod
@@ -157,6 +171,7 @@ try:
             no_create_branch=False,
             force=False,
             dry_run=False,
+            no_bindpaths=False,
         ):
             from datalad.distribution.dataset import require_dataset
 
@@ -179,6 +194,7 @@ try:
                 create_branch=not no_create_branch,
                 force=force,
                 dry_run=dry_run,
+                configure_containers=not no_bindpaths,
             ):
                 if report.result == WorktreeResult.STARTING:
                     # Progress indicator — render directly, don't yield
@@ -191,6 +207,7 @@ try:
                 if report.result in (
                     WorktreeResult.CREATED,
                     WorktreeResult.CREATED_NEW_BRANCH,
+                    WorktreeResult.CONFIGURED,
                 ):
                     status = "ok"
                 elif report.result.name.startswith("SKIPPED"):
@@ -203,6 +220,8 @@ try:
                     skip_reason = "not installed"
                 elif report.result == WorktreeResult.SKIPPED_NOT_GIT_REPO:
                     skip_reason = "not a git repo"
+                elif report.result == WorktreeResult.SKIPPED_CONTAINER:
+                    skip_reason = report.message
 
                 yield get_status_dict(
                     action="worktree-add",
@@ -216,6 +235,11 @@ try:
                     new_branch=report.result == WorktreeResult.CREATED_NEW_BRANCH,
                     skip_reason=skip_reason,
                     dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
+                    container_config=report.result == WorktreeResult.CONFIGURED,
+                    container=report.result in (
+                        WorktreeResult.CONFIGURED,
+                        WorktreeResult.SKIPPED_CONTAINER,
+                    ),
                     worktree_root=str(worktree_root),
                     type="dataset",
                 )

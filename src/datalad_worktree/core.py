@@ -28,6 +28,8 @@ class WorktreeResult(Enum):
     SKIPPED_NOT_GIT_REPO = auto()
     SKIPPED_DRY_RUN = auto()
     SKIPPED_NO_WORKTREE = auto()   # remove: no worktree found at path/branch
+    SKIPPED_CONTAINER = auto()     # add: container left unconfigured (see message)
+    CONFIGURED = auto()            # add: container bind-mount config written
     REMOVED = auto()
     REMOVED_BRANCH = auto()
     FAILED = auto()
