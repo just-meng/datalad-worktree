@@ -158,6 +158,19 @@ def _parse_worktree_entry(data: dict) -> GitWorktreeEntry:
     )
 
 
+def git_worktree_prune(repo_path: Path) -> None:
+    """
+    Run `git worktree prune` to drop administrative data for worktrees
+    whose directory is gone (e.g. removed with `rm -rf` instead of
+    `worktree delete`).
+    """
+    subprocess.run(
+        ["git", "-C", str(repo_path), "worktree", "prune"],
+        capture_output=True,
+        text=True,
+    )
+
+
 def git_branch_checked_out_at(repo_path: Path, branch: str) -> Path | None:
     """
     If ``branch`` is checked out in any worktree of ``repo_path``,
