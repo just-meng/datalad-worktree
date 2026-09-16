@@ -113,7 +113,7 @@ def add_placeholder(cmdexec: str) -> tuple[str | None, str]:
     there is nothing to do or no anchor to insert at.
     """
     if PLACEHOLDER in cmdexec:
-        return None, "already configured"
+        return None, f"cmdexec already contains {PLACEHOLDER}"
     if IMG_ANCHOR not in cmdexec:
         return None, f"no {IMG_ANCHOR} anchor in cmdexec"
     return cmdexec.replace(IMG_ANCHOR, f"{PLACEHOLDER} {IMG_ANCHOR}", 1), ""
