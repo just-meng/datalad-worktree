@@ -4,6 +4,8 @@ List command: show all worktrees for a dataset hierarchy.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,3 +58,41 @@ def list_nested_worktrees(
         ))
 
     return results
+
+
+# (dataset_path, worktree_path, branch, is_main)
+WorktreeEntry = tuple[str, Path, str, bool]
+MainGroup = list[tuple[str, Path, str]]
+BranchGroups = dict[str, list[tuple[str, Path]]]
+
+
+def group_by_branch(
+    entries: Iterable[WorktreeEntry],
+) -> tuple[MainGroup, BranchGroups, str | None]:
+    """
+    Group worktree entries for ``list`` output.
+
+    Returns each dataset's main worktree, its extra worktrees grouped by
+    branch, and the superdataset's branch (or None if it has no worktree).
+    """
+    main_group: MainGroup = []
+    branch_groups: BranchGroups = defaultdict(list)
+    super_branch: str | None = None
+
+    for dataset_path, worktree_path, branch, is_main in entries:
+        if is_main:
+            main_group.append((dataset_path, worktree_path, branch))
+            if dataset_path == ".":
+                super_branch = branch
+        else:
+            branch_groups[branch].append((dataset_path, worktree_path))
+
+    return main_group, branch_groups, super_branch
+
+
+def column_width(main_group: MainGroup, branch_groups: BranchGroups) -> int:
+    """Column width to align the dataset-path label in ``list`` output."""
+    paths = [p for p, _, _ in main_group] + [
+        p for entries in branch_groups.values() for p, _ in entries
+    ]
+    return max(len(p) for p in paths) + 2 if paths else 20

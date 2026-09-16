@@ -24,13 +24,7 @@ logger = logging.getLogger(__name__)
 
 def _resolve_target(target: str) -> str:
     """Determine if target is a path or branch name."""
-    p = Path(target)
-    if p.is_absolute() and p.exists():
-        return "path"
-    # Could be a relative path that exists
-    if p.exists():
-        return "path"
-    return "branch"
+    return "path" if Path(target).exists() else "branch"
 
 
 def _find_worktree_by_path(

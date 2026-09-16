@@ -55,7 +55,12 @@ try:
             skip_reason = res.get("skip_reason", "")
             dry_run = res.get("dry_run", False)
 
-            if status == "ok":
+            if res.get("container_config"):
+                ui.message("{} {} ({})".format(
+                    ac.color_word("config", ac.GREEN),
+                    label, res.get("message", ""),
+                ))
+            elif status == "ok":
                 extra = ""
                 if res.get("new_branch"):
                     extra = ac.color_word(" (new branch)", ac.YELLOW)
@@ -95,6 +100,8 @@ try:
                     worktree_root = res["worktree_root"]
                 if res.get("dry_run"):
                     is_dry_run = True
+                if res.get("container"):
+                    continue  # not a worktree, don't count it as one
                 if res.get("status") == "ok":
                     created += 1
                 if res.get("status") == "notneeded":
@@ -146,6 +153,13 @@ try:
                 action="store_true",
                 default=False,
             ),
+            no_bindpaths=Parameter(
+                args=("--no-bindpaths",),
+                doc="""Don't configure container bind mounts for
+                datalad containers-run""",
+                action="store_true",
+                default=False,
+            ),
         )
 
         @staticmethod
@@ -157,11 +171,12 @@ try:
             no_create_branch=False,
             force=False,
             dry_run=False,
+            no_bindpaths=False,
         ):
             from datalad.distribution.dataset import require_dataset
 
             from datalad_worktree.add import create_nested_worktrees
-            from datalad_worktree.core import WorktreeResult
+            from datalad_worktree.core import SKIPPED_RESULTS, WorktreeResult
 
             ds = require_dataset(
                 dataset,
@@ -179,6 +194,7 @@ try:
                 create_branch=not no_create_branch,
                 force=force,
                 dry_run=dry_run,
+                configure_containers=not no_bindpaths,
             ):
                 if report.result == WorktreeResult.STARTING:
                     # Progress indicator — render directly, don't yield
@@ -191,9 +207,10 @@ try:
                 if report.result in (
                     WorktreeResult.CREATED,
                     WorktreeResult.CREATED_NEW_BRANCH,
+                    WorktreeResult.CONFIGURED,
                 ):
                     status = "ok"
-                elif report.result.name.startswith("SKIPPED"):
+                elif report.result in SKIPPED_RESULTS:
                     status = "notneeded"
                 else:
                     status = "error"
@@ -203,6 +220,8 @@ try:
                     skip_reason = "not installed"
                 elif report.result == WorktreeResult.SKIPPED_NOT_GIT_REPO:
                     skip_reason = "not a git repo"
+                elif report.result == WorktreeResult.SKIPPED_CONTAINER:
+                    skip_reason = report.message
 
                 yield get_status_dict(
                     action="worktree-add",
@@ -216,6 +235,11 @@ try:
                     new_branch=report.result == WorktreeResult.CREATED_NEW_BRANCH,
                     skip_reason=skip_reason,
                     dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
+                    container_config=report.result == WorktreeResult.CONFIGURED,
+                    container=report.result in (
+                        WorktreeResult.CONFIGURED,
+                        WorktreeResult.SKIPPED_CONTAINER,
+                    ),
                     worktree_root=str(worktree_root),
                     type="dataset",
                 )
@@ -244,34 +268,24 @@ try:
 
         @staticmethod
         def custom_result_summary_renderer(results):
-            from collections import defaultdict
+            from datalad_worktree.list_cmd import column_width, group_by_branch
 
-            main_group = []   # (dataset_path, wt_path, branch)
-            branch_groups = defaultdict(list)  # branch -> [(dataset_path, wt_path)]
-            super_branch = None
-
-            for res in results:
-                if res.get("action") != "worktree-list":
-                    continue
-                ds_path = res.get("dataset_path", ".")
-                wt_path = res.get("path", "")
-                branch = res.get("branch", "") or "(detached)"
-                is_main = res.get("is_main", False)
-
-                if is_main:
-                    main_group.append((ds_path, wt_path, branch))
-                    if ds_path == ".":
-                        super_branch = branch
-                else:
-                    branch_groups[branch].append((ds_path, wt_path))
+            entries = (
+                (
+                    res.get("dataset_path", "."),
+                    res.get("path", ""),
+                    res.get("branch", "") or "(detached)",
+                    res.get("is_main", False),
+                )
+                for res in results
+                if res.get("action") == "worktree-list"
+            )
+            main_group, branch_groups, super_branch = group_by_branch(entries)
 
             if not main_group and not branch_groups:
                 return
 
-            all_paths = [p for p, _, _ in main_group] + [
-                p for entries in branch_groups.values() for p, _ in entries
-            ]
-            col_width = max(len(p) for p in all_paths) + 2 if all_paths else 20
+            col_width = column_width(main_group, branch_groups)
 
             if main_group:
                 header = super_branch or "(unknown)"

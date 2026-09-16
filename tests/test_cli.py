@@ -225,15 +225,22 @@ class TestMainCLI:
 class TestCLISummaryOutput:
     """Test that summary lines are printed correctly."""
 
-    def test_add_summary_line(self, superds: dict, capsys):
+    def test_add_and_remove_summary_lines(self, superds: dict, capsys):
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
             str(superds["wt_location"] / "sum-test"), "feat/sum",
         ])
-        out = capsys.readouterr().out
-        # Summary should mention "4 created"
-        assert "4 created" in out
+        add_out = capsys.readouterr().out
+        assert "4 created" in add_out
+
+        main([
+            "--no-color", "remove", "--yes",
+            "-d", str(superds["super"]),
+            "feat/sum",
+        ])
+        rm_out = capsys.readouterr().out
+        assert "4 removed" in rm_out
 
     def test_add_dry_run_summary(self, superds: dict, capsys):
         main([
@@ -262,23 +269,6 @@ class TestCLISummaryOutput:
         ])
         out = capsys.readouterr().out
         assert "skipped" in out
-
-    def test_remove_summary_line(self, superds: dict, capsys):
-        main([
-            "--no-color", "add",
-            "-d", str(superds["super"]),
-            str(superds["wt_location"] / "sum-rm"), "feat/sum-rm",
-        ])
-        # Clear the add output
-        capsys.readouterr()
-
-        main([
-            "--no-color", "remove", "--yes",
-            "-d", str(superds["super"]),
-            "feat/sum-rm",
-        ])
-        out = capsys.readouterr().out
-        assert "4 removed" in out
 
     def test_remove_summary_with_skipped(self, superds: dict, capsys):
         main([

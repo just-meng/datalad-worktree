@@ -96,12 +96,13 @@ datalad worktree-remove my-feature
 ### `worktree add`
 
 ```
-worktree add [-h] [-n] [-f] [--no-create-branch] [-d DATASET]
+worktree add [-h] [-n] [-f] [--no-create-branch] [--no-bindpaths] [-d DATASET]
              worktree_path branch
 
   -n, --dry-run             Show what would be done without doing it
   -f, --force               Pass --force to git worktree add
   --no-create-branch        Only checkout existing branches, don't create new ones
+  --no-bindpaths            Don't configure container bind mounts
 ```
 
 ### `worktree list`
@@ -129,6 +130,19 @@ worktree remove [-h] [--delete-branch] [-f] [-y] [-d DATASET] target
 3. **Create worktrees** for the superdataset and each subdataset, with real-time progress.
 
 Subdatasets that are not installed (no `.git` present) are skipped. A failed subdataset does not abort the remaining ones.
+
+### Containers
+
+`datalad containers-run` cannot read annexed files inside a worktree: in a worktree `.git` is a symlink into the main repository, so git-annex object symlinks resolve to paths outside the worktree directory, which a container does not see. The result is `FileNotFoundError` on every annexed input ([datalad-container#288](https://github.com/datalad/datalad-container/issues/288)).
+
+`worktree add` fixes this for any dataset that registers a container with a `cmdexec`. Per worktree it writes, using `git config --worktree` so nothing leaks into the main checkout:
+
+- `datalad.run.substitutions.bindpaths` — the `-B <superdataset>:<superdataset>:ro` option
+- `datalad.containers.<name>.cmdexec` — your `cmdexec` with `{{bindpaths}}` inserted before `{img}`
+
+It also commits one line to the tracked `.datalad/config`, on the worktree branch: an empty `datalad.run.substitutions.bindpaths`. `run` records commands with substitutions unexpanded, so without that fallback a run record made in a worktree cannot be rerun anywhere else.
+
+Containers whose `cmdexec` has no `{img}` to anchor the insertion are skipped with a warning, as are containers registered without a `cmdexec` at all. Pass `--no-bindpaths` to skip the whole step.
 
 ### List
 

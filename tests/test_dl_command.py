@@ -32,6 +32,8 @@ def _call_interface(cls, **kwargs):
 
 class TestWorktreeAdd:
     def test_basic_creation(self, superds: dict):
+        """Creating nested worktrees yields one 'ok' result dict per dataset,
+        with the DataLad-specific fields set."""
         wt_path = superds["wt_location"] / "dl-add"
         results = _call_interface(
             WorktreeAdd,
@@ -43,6 +45,16 @@ class TestWorktreeAdd:
         assert len(ok_results) == 4
         assert wt_path.is_dir()
         assert (wt_path / "sub-01" / ".git").exists()
+
+        for res in results:
+            assert res["action"] == "worktree-add"
+            assert "path" in res
+            assert "branch" in res
+            assert "dataset_path" in res
+            assert "worktree_root" in res
+            assert res["type"] == "dataset"
+
+        assert all(r.get("new_branch") for r in ok_results)
 
     def test_dry_run(self, superds: dict):
         wt_path = superds["wt_location"] / "dl-dry"
@@ -56,36 +68,6 @@ class TestWorktreeAdd:
         dry_results = [r for r in results if r.get("dry_run")]
         assert len(dry_results) == 4
         assert not wt_path.exists()
-
-    def test_result_dict_fields(self, superds: dict):
-        """Verify result dicts contain expected fields."""
-        wt_path = superds["wt_location"] / "dl-fields"
-        results = _call_interface(
-            WorktreeAdd,
-            worktree_path=str(wt_path),
-            branch="feat/dl-fields",
-            dataset=str(superds["super"]),
-        )
-        for res in results:
-            assert res["action"] == "worktree-add"
-            assert "path" in res
-            assert "status" in res
-            assert "branch" in res
-            assert "dataset_path" in res
-            assert "worktree_root" in res
-            assert res["type"] == "dataset"
-
-    def test_new_branch_flag(self, superds: dict):
-        """new_branch flag is set when a branch is newly created."""
-        wt_path = superds["wt_location"] / "dl-newbr"
-        results = _call_interface(
-            WorktreeAdd,
-            worktree_path=str(wt_path),
-            branch="feat/dl-newbr",
-            dataset=str(superds["super"]),
-        )
-        ok_results = [r for r in results if r["status"] == "ok"]
-        assert all(r.get("new_branch") for r in ok_results)
 
     def test_skip_reason_for_uninstalled(self, superds: dict):
         """Uninstalled subdatasets produce skip_reason in result dict."""
@@ -139,7 +121,8 @@ class TestWorktreeList:
         assert len(results) == 0
 
     def test_shows_extra_worktrees(self, superds: dict):
-        """After creating worktrees, list returns them."""
+        """After creating worktrees, list returns one entry per worktree per
+        dataset, with expected fields and is_main correctly flagged."""
         _call_interface(
             WorktreeAdd,
             worktree_path=str(superds["wt_location"] / "dl-list"),
@@ -155,19 +138,6 @@ class TestWorktreeList:
         # Each of 4 datasets has 2 worktrees (main + new) = 8 entries
         assert len(ok_results) == 8
 
-    def test_result_dict_fields(self, superds: dict):
-        """Verify list result dicts contain expected fields."""
-        _call_interface(
-            WorktreeAdd,
-            worktree_path=str(superds["wt_location"] / "dl-list-fields"),
-            branch="feat/dl-list-f",
-            dataset=str(superds["super"]),
-        )
-
-        results = _call_interface(
-            WorktreeList,
-            dataset=str(superds["super"]),
-        )
         for res in results:
             assert res["action"] == "worktree-list"
             assert "path" in res
@@ -176,19 +146,6 @@ class TestWorktreeList:
             assert "is_main" in res
             assert res["type"] == "dataset"
 
-    def test_is_main_flag(self, superds: dict):
-        """Main worktree should have is_main=True."""
-        _call_interface(
-            WorktreeAdd,
-            worktree_path=str(superds["wt_location"] / "dl-list-main"),
-            branch="feat/dl-list-m",
-            dataset=str(superds["super"]),
-        )
-
-        results = _call_interface(
-            WorktreeList,
-            dataset=str(superds["super"]),
-        )
         main_wts = [r for r in results if r.get("is_main")]
         non_main = [r for r in results if not r.get("is_main")]
         assert len(main_wts) == 4
@@ -205,6 +162,7 @@ class TestWorktreeRemove:
         )
 
     def test_remove_by_branch(self, superds: dict):
+        """Remove by branch, and check the result-dict shape while at it."""
         self._setup_worktrees(superds, "dl-rm", "feat/dl-rm")
 
         results = _call_interface(
@@ -218,6 +176,14 @@ class TestWorktreeRemove:
         ]
         assert len(ok_results) == 4
         assert not (superds["wt_location"] / "dl-rm").exists()
+
+        for res in results:
+            assert res["action"] == "worktree-remove"
+            assert "path" in res
+            assert "status" in res
+            assert "branch" in res
+            assert "dataset_path" in res
+            assert res["type"] == "dataset"
 
     def test_remove_by_path(self, superds: dict):
         wt_path = superds["wt_location"] / "dl-rm-path"
@@ -234,23 +200,6 @@ class TestWorktreeRemove:
         ]
         assert len(ok_results) == 4
         assert not wt_path.exists()
-
-    def test_result_dict_fields(self, superds: dict):
-        """Verify remove result dicts contain expected fields."""
-        self._setup_worktrees(superds, "dl-rm-fields", "feat/dl-rm-f")
-
-        results = _call_interface(
-            WorktreeRemove,
-            target="feat/dl-rm-f",
-            dataset=str(superds["super"]),
-        )
-        for res in results:
-            assert res["action"] == "worktree-remove"
-            assert "path" in res
-            assert "status" in res
-            assert "branch" in res
-            assert "dataset_path" in res
-            assert res["type"] == "dataset"
 
     def test_delete_branch(self, superds: dict):
         """--delete-branch produces branch_deleted results."""
