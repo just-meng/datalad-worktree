@@ -93,7 +93,7 @@ def superds(tmp_path: Path) -> dict:
     subdatasets(
         dataset=superds,
         recursive=True,
-        fulfilled=False,
+        state="absent",
         result_renderer="disabled",
         on_failure="ignore",
     )
