@@ -3,8 +3,8 @@ Command-line interface for datalad-worktree.
 
 Can be invoked as:
   - ``worktree add <worktree-path> <branch>``
-  - ``worktree list``
-  - ``worktree remove <path-or-branch>``
+  - ``worktree`` or ``worktree list``
+  - ``worktree delete <path-or-branch>``
   - ``python -m datalad_worktree ...``
 """
 
@@ -67,10 +67,10 @@ def _render_report(report: WorktreeReport) -> None:
         print(f"{C.YELLOW}skip{C.NC}   {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.CONFIGURED:
         print(f"{C.GREEN}config{C.NC} {label} {C.DIM}({report.message}){C.NC}")
-    elif report.result == WorktreeResult.REMOVED:
-        print(f"{C.GREEN}remove{C.NC} {label} -> {dest}")
-    elif report.result == WorktreeResult.REMOVED_BRANCH:
-        print(f"{C.GREEN}remove{C.NC} {label} branch '{report.branch}'")
+    elif report.result == WorktreeResult.DELETED:
+        print(f"{C.GREEN}delete{C.NC} {label} -> {dest}")
+    elif report.result == WorktreeResult.DELETED_BRANCH:
+        print(f"{C.GREEN}delete{C.NC} {label} branch '{report.branch}'")
     elif report.result == WorktreeResult.FAILED:
         if is_tty:
             print("\033[2K", end="")
@@ -140,28 +140,28 @@ def build_parser():
         help="Path to the superdataset root (default: current directory)",
     )
 
-    # ── remove ───────────────────────────────────────────────────────────
-    rm_p = sub.add_parser(
-        "remove",
-        help="Remove nested worktrees by path or branch name",
+    # ── delete ───────────────────────────────────────────────────────────
+    del_p = sub.add_parser(
+        "delete",
+        help="Delete nested worktrees by path or branch name",
     )
-    rm_p.add_argument(
+    del_p.add_argument(
         "target",
-        help="Worktree path or branch name to remove",
+        help="Worktree path or branch name to delete",
     )
-    rm_p.add_argument(
+    del_p.add_argument(
         "--delete-branch", action="store_true", default=False,
         help="Also delete the branch (safe delete; refuses if unmerged)",
     )
-    rm_p.add_argument(
+    del_p.add_argument(
         "-f", "--force", action="store_true", default=False,
-        help="Force removal even with uncommitted changes; force-delete branch",
+        help="Force deletion even with uncommitted changes; force-delete branch",
     )
-    rm_p.add_argument(
+    del_p.add_argument(
         "-y", "--yes", action="store_true", default=False,
         help="Skip confirmation prompt",
     )
-    rm_p.add_argument(
+    del_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
         help="Path to the superdataset root (default: current directory)",
     )
@@ -277,7 +277,6 @@ def _cmd_list(args) -> int:
 
     # Print extra branch groups
     for branch in sorted(branch_groups):
-        print()
         print(f"{C.GREEN}{branch}{C.NC}")
         for ds_path, wt_path in branch_groups[branch]:
             print(f"  {ds_path:<{col_width}}{wt_path}")
@@ -285,17 +284,17 @@ def _cmd_list(args) -> int:
     return 0
 
 
-def _cmd_remove(args) -> int:
-    from datalad_worktree.remove import (
-        remove_nested_worktrees,
-        resolve_removal_targets,
+def _cmd_delete(args) -> int:
+    from datalad_worktree.delete import (
+        delete_nested_worktrees,
+        resolve_delete_targets,
     )
 
     superds_path = (args.dataset or Path.cwd()).resolve()
 
     # ── Resolve targets ─────────────────────────────────────────────────
     try:
-        targets, skipped = resolve_removal_targets(superds_path, args.target)
+        targets, skipped = resolve_delete_targets(superds_path, args.target)
     except ValueError as e:
         print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
         return 1
@@ -303,13 +302,13 @@ def _cmd_remove(args) -> int:
     if not targets:
         for report in skipped:
             _render_report(report)
-        print(f"\n0 removed, {len(skipped)} skipped")
+        print(f"\n0 deleted, {len(skipped)} skipped")
         return 0
 
     # ── Show preview and confirm ────────────────────────────────────────
     col_width = max(len(t.dataset_path) for t in targets) + 2
 
-    print(f"Will remove {len(targets)} worktree(s):")
+    print(f"Will delete {len(targets)} worktree(s):")
     for t in targets:
         print(f"  {t.dataset_path:<{col_width}}{t.worktree_path}")
     if args.delete_branch:
@@ -327,12 +326,12 @@ def _cmd_remove(args) -> int:
             print("Aborted.")
             return 1
 
-    # ── Remove ──────────────────────────────────────────────────────────
+    # ── Delete ──────────────────────────────────────────────────────────
     try:
         reports: list[WorktreeReport] = []
-        removed = 0
+        deleted = 0
         skipped_count = len(skipped)
-        for report in remove_nested_worktrees(
+        for report in delete_nested_worktrees(
             superds_path=superds_path,
             target=args.target,
             delete_branch=args.delete_branch,
@@ -340,8 +339,8 @@ def _cmd_remove(args) -> int:
         ):
             reports.append(report)
             _render_report(report)
-            if report.result == WorktreeResult.REMOVED:
-                removed += 1
+            if report.result == WorktreeResult.DELETED:
+                deleted += 1
             elif report.result == WorktreeResult.SKIPPED_NO_WORKTREE:
                 skipped_count += 1
     except ValueError as e:
@@ -350,7 +349,7 @@ def _cmd_remove(args) -> int:
 
     has_failures = any(r.result == WorktreeResult.FAILED for r in reports)
 
-    parts = [f"{removed} removed"]
+    parts = [f"{deleted} deleted"]
     if skipped_count:
         parts.append(f"{skipped_count} skipped")
     print(f"\n{', '.join(parts)}")
@@ -369,15 +368,15 @@ def main(argv: list[str] | None = None) -> int:
         _Colors.disable()
 
     if args.command is None:
-        parser.print_help()
-        return 1
+        args.dataset = None
+        return _cmd_list(args)
 
     if args.command == "add":
         return _cmd_add(args)
     elif args.command == "list":
         return _cmd_list(args)
-    elif args.command == "remove":
-        return _cmd_remove(args)
+    elif args.command == "delete":
+        return _cmd_delete(args)
 
     parser.print_help()
     return 1

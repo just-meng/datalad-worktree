@@ -1,5 +1,5 @@
 """
-Remove command: remove nested worktrees by path or branch name.
+Delete command: delete nested worktrees by path or branch name.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _find_worktree_by_branch(
 
 def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = False) -> str:
     """
-    Remove a worktree. Tries `git worktree remove` first; if that fails
+    Delete a worktree. Tries `git worktree remove` first; if that fails
     (e.g. .git is a directory instead of a gitlink file, common in DataLad),
     falls back to deleting the directory and pruning.
     Returns error message or empty string.
@@ -67,13 +67,13 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
     if result.returncode == 0:
         return ""
 
-    # Fallback: remove directory manually and prune
+    # Fallback: delete directory manually and prune
     wt = Path(worktree_path)
     if wt.exists():
         try:
             shutil.rmtree(wt)
         except OSError as e:
-            return f"failed to remove {wt}: {e}"
+            return f"failed to delete {wt}: {e}"
         _git_worktree_prune(repo_path)
         return ""
 
@@ -106,25 +106,25 @@ def _git_branch_delete(repo_path: Path, branch: str, force: bool = False) -> str
 
 
 @dataclass
-class RemoveTarget:
-    """A resolved worktree target for removal."""
+class DeleteTarget:
+    """A resolved worktree target for deletion."""
     dataset_path: str   # relative path (or "." for superds)
     repo_path: Path     # path to the original repository
-    worktree_path: Path # path to the worktree to remove
+    worktree_path: Path # path to the worktree to delete
     branch: str         # branch name (or "" if unknown)
 
 
-def resolve_removal_targets(
+def resolve_delete_targets(
     superds_path: Path,
     target: str,
-) -> tuple[list[RemoveTarget], list[WorktreeReport]]:
+) -> tuple[list[DeleteTarget], list[WorktreeReport]]:
     """
-    Resolve which worktrees would be removed, without removing anything.
+    Resolve which worktrees would be deleted, without deleting anything.
 
     Returns
     -------
-    targets : list[RemoveTarget]
-        Worktrees that would be removed, deepest-first.
+    targets : list[DeleteTarget]
+        Worktrees that would be deleted, deepest-first.
     skipped : list[WorktreeReport]
         Datasets where no matching worktree was found.
     """
@@ -142,10 +142,10 @@ def resolve_removal_targets(
         if subds.installed and is_git_repo(subds.abs_path):
             all_datasets.append((subds.rel_path, subds.abs_path))
 
-    # Process deepest first for removal
+    # Process deepest first for deletion
     all_datasets.reverse()
 
-    targets: list[RemoveTarget] = []
+    targets: list[DeleteTarget] = []
     skipped: list[WorktreeReport] = []
 
     for dataset_path, repo_path in all_datasets:
@@ -172,7 +172,7 @@ def resolve_removal_targets(
                 if entry.path.resolve() == wt_path.resolve():
                     branch = entry.branch or ""
                     break
-            targets.append(RemoveTarget(dataset_path, repo_path, wt_path, branch))
+            targets.append(DeleteTarget(dataset_path, repo_path, wt_path, branch))
 
         else:  # mode == "branch"
             wt_path, found_branch = _find_worktree_by_branch(repo_path, target)
@@ -186,26 +186,26 @@ def resolve_removal_targets(
                     message=f"no worktree on branch '{target}'",
                 ))
                 continue
-            targets.append(RemoveTarget(dataset_path, repo_path, wt_path, target))
+            targets.append(DeleteTarget(dataset_path, repo_path, wt_path, target))
 
     return targets, skipped
 
 
-def remove_nested_worktrees(
+def delete_nested_worktrees(
     superds_path: Path,
     target: str,
     delete_branch: bool = False,
     force: bool = False,
 ) -> Iterator[WorktreeReport]:
     """
-    Remove nested worktrees by path or branch name.
+    Delete nested worktrees by path or branch name.
 
-    If ``target`` is an existing directory path, removes the worktree at that
-    path for each dataset. If ``target`` is a branch name, finds and removes
+    If ``target`` is an existing directory path, deletes the worktree at that
+    path for each dataset. If ``target`` is a branch name, finds and deletes
     worktrees checking out that branch.
 
     Processes subdatasets deepest-first (reverse order) so children are
-    removed before parents.
+    deleted before parents.
 
     Parameters
     ----------
@@ -224,12 +224,12 @@ def remove_nested_worktrees(
     WorktreeReport
         One report per dataset processed.
     """
-    targets, skipped = resolve_removal_targets(superds_path, target)
+    targets, skipped = resolve_delete_targets(superds_path, target)
 
     # Yield skipped reports
     yield from skipped
 
-    # Remove each target
+    # Delete each target
     for t in targets:
         err = _git_worktree_remove(t.repo_path, t.worktree_path, force=force)
         if err:
@@ -247,7 +247,7 @@ def remove_nested_worktrees(
             dataset_path=t.dataset_path,
             source=t.repo_path,
             destination=t.worktree_path,
-            result=WorktreeResult.REMOVED,
+            result=WorktreeResult.DELETED,
             branch=t.branch,
         )
 
@@ -268,7 +268,7 @@ def remove_nested_worktrees(
                     dataset_path=t.dataset_path,
                     source=t.repo_path,
                     destination=t.worktree_path,
-                    result=WorktreeResult.REMOVED_BRANCH,
+                    result=WorktreeResult.DELETED_BRANCH,
                     branch=t.branch,
                 )
 
