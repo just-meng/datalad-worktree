@@ -22,7 +22,7 @@ For development:
 
 ```bash
 cd datalad-worktree
-uv sync --extra dev
+uv sync --dev
 
 # Run from any directory using local code
 uv run --project ~/path/to/datalad-worktree worktree list
@@ -37,11 +37,11 @@ cd /data/my-superdataset
 # Create nested worktrees
 worktree add /tmp/worktrees/my-feature my-feature
 
-# List all worktrees across the hierarchy
+# List all worktrees across the hierarchy (also the default with no subcommand)
 worktree list
 
-# Remove worktrees by branch name
-worktree remove my-feature
+# Delete worktrees by branch name
+worktree delete my-feature
 ```
 
 Creating worktrees discovers all subdatasets and produces:
@@ -70,15 +70,16 @@ worktree add --dry-run /tmp/wt experiment
 worktree add --force /tmp/wt my-feature
 worktree add --no-create-branch /tmp/wt v1.0
 
-# List worktrees (grouped by branch)
+# List worktrees (grouped by branch); also the default with no subcommand
 worktree list
+worktree
 
-# Remove worktrees (prompts for confirmation)
-worktree remove my-feature
-worktree remove /tmp/wt
-worktree remove --yes my-feature              # skip prompt
-worktree remove --delete-branch my-feature    # also delete the branch
-worktree remove --force --delete-branch my-feature
+# Delete worktrees (prompts for confirmation)
+worktree delete my-feature
+worktree delete /tmp/wt
+worktree delete --yes my-feature              # skip prompt
+worktree delete --delete-branch my-feature    # also delete the branch
+worktree delete --force --delete-branch my-feature
 ```
 
 ### DataLad Commands
@@ -88,7 +89,7 @@ If DataLad is installed, the tool registers as a DataLad extension:
 ```bash
 datalad worktree-add /tmp/wt my-feature
 datalad worktree-list
-datalad worktree-remove my-feature
+datalad worktree-delete my-feature
 ```
 
 ## CLI Reference
@@ -111,13 +112,15 @@ worktree add [-h] [-n] [-f] [--no-create-branch] [--no-bindpaths] [-d DATASET]
 worktree list [-h] [-d DATASET]
 ```
 
-### `worktree remove`
+Also the default when no subcommand is given (`worktree` alone).
+
+### `worktree delete`
 
 ```
-worktree remove [-h] [--delete-branch] [-f] [-y] [-d DATASET] target
+worktree delete [-h] [--delete-branch] [-f] [-y] [-d DATASET] target
 
   --delete-branch           Also delete the branch (safe delete; refuses if unmerged)
-  -f, --force               Force removal even with uncommitted changes; force-delete branch
+  -f, --force               Force deletion even with uncommitted changes; force-delete branch
   -y, --yes                 Skip confirmation prompt
 ```
 
@@ -148,11 +151,11 @@ Containers whose `cmdexec` has no `{img}` to anchor the insertion are skipped wi
 
 Shows worktrees grouped by branch. Main worktrees are listed first under the superdataset's branch, followed by each extra branch as a separate section.
 
-### Remove
+### Delete
 
 1. **Resolve** which worktrees match the target (path or branch name).
 2. **Preview** the directories that will be deleted and ask for confirmation (`--yes` to skip).
-3. **Remove** deepest-first so children are removed before parents. Falls back to manual deletion for DataLad repos where `git worktree remove` fails.
+3. **Delete** deepest-first so children are deleted before parents. Falls back to manual deletion for DataLad repos where `git worktree remove` fails.
 4. Optionally **delete the branch** (`git branch -d`, or `-D` with `--force`).
 
 ## Requirements
