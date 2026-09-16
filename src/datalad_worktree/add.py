@@ -114,28 +114,26 @@ def _preflight_check(
     subdatasets: list[SubDataset],
     create_branch: bool,
     force: bool,
-) -> list[str]:
+) -> list[tuple[str, str]]:
     """
     Check all datasets before creating any worktrees.
 
-    Returns a list of error messages. Empty means all clear.
+    Returns a list of (dataset_path, error_message) pairs. Empty means all clear.
     """
-    errors: list[str] = []
+    errors: list[tuple[str, str]] = []
 
     # Check superds
     if worktree_root.exists() and not force:
-        errors.append(
-            f".: worktree root already exists: {worktree_root}"
-        )
+        errors.append((".", f"worktree root already exists: {worktree_root}"))
     else:
         conflict = git_branch_checked_out_at(superds_path, branch)
         if conflict is not None:
             errors.append(
-                f".: branch '{branch}' is already checked out at {conflict}"
+                (".", f"branch '{branch}' is already checked out at {conflict}")
             )
         elif not create_branch and not git_branch_exists(superds_path, branch):
             errors.append(
-                f".: branch '{branch}' does not exist and --no-create-branch was set"
+                (".", f"branch '{branch}' does not exist and --no-create-branch was set")
             )
 
     # Check subdatasets
@@ -145,15 +143,15 @@ def _preflight_check(
 
         conflict = git_branch_checked_out_at(subds.abs_path, branch)
         if conflict is not None:
-            errors.append(
-                f"{subds.rel_path}: branch '{branch}' is already checked out"
-                f" at {conflict}"
-            )
+            errors.append((
+                subds.rel_path,
+                f"branch '{branch}' is already checked out at {conflict}",
+            ))
         elif not create_branch and not git_branch_exists(subds.abs_path, branch):
-            errors.append(
-                f"{subds.rel_path}: branch '{branch}' does not exist"
-                " and --no-create-branch was set"
-            )
+            errors.append((
+                subds.rel_path,
+                f"branch '{branch}' does not exist and --no-create-branch was set",
+            ))
 
     return errors
 
@@ -205,8 +203,7 @@ def create_nested_worktrees(
             create_branch, force,
         )
         if errors:
-            for err in errors:
-                dataset_path, _, msg = err.partition(": ")
+            for dataset_path, msg in errors:
                 source = superds_path if dataset_path == "." else superds_path / dataset_path
                 dest = worktree_root if dataset_path == "." else worktree_root / dataset_path
                 yield WorktreeReport(

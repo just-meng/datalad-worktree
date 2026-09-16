@@ -35,6 +35,15 @@ class WorktreeResult(Enum):
     FAILED = auto()
 
 
+SKIPPED_RESULTS = frozenset({
+    WorktreeResult.SKIPPED_NOT_INSTALLED,
+    WorktreeResult.SKIPPED_NOT_GIT_REPO,
+    WorktreeResult.SKIPPED_DRY_RUN,
+    WorktreeResult.SKIPPED_NO_WORKTREE,
+    WorktreeResult.SKIPPED_CONTAINER,
+})
+
+
 @dataclass
 class WorktreeReport:
     """Report for a single worktree operation."""
@@ -62,10 +71,7 @@ class WorktreeCreateResult:
 
     @property
     def skipped(self) -> list[WorktreeReport]:
-        return [
-            r for r in self.reports
-            if r.result.name.startswith("SKIPPED")
-        ]
+        return [r for r in self.reports if r.result in SKIPPED_RESULTS]
 
     @property
     def failed(self) -> list[WorktreeReport]:

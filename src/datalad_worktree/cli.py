@@ -229,9 +229,11 @@ def _cmd_add(args) -> int:
 
 
 def _cmd_list(args) -> int:
-    from collections import defaultdict
-
-    from datalad_worktree.list_cmd import list_nested_worktrees
+    from datalad_worktree.list_cmd import (
+        column_width,
+        group_by_branch,
+        list_nested_worktrees,
+    )
 
     superds_path = (args.dataset or Path.cwd()).resolve()
 
@@ -249,31 +251,19 @@ def _cmd_list(args) -> int:
     if not datasets_with_extras:
         return 0
 
-    # Collect entries grouped by branch
-    # main_group: entries for the main worktree of each dataset
-    # branch_groups: entries for each extra worktree branch
-    main_group: list[tuple[str, Path, str]] = []  # (dataset_path, wt_path, branch)
-    branch_groups: dict[str, list[tuple[str, Path]]] = defaultdict(list)
-    super_branch = None
-
-    for ds_wt in datasets_with_extras:
-        for wt in ds_wt.worktrees:
-            if wt.bare:
-                continue
-            is_main = wt.path.resolve() == ds_wt.source.resolve()
-            branch = wt.branch or "(detached)"
-            if is_main:
-                main_group.append((ds_wt.dataset_path, wt.path, branch))
-                if ds_wt.dataset_path == ".":
-                    super_branch = branch
-            else:
-                branch_groups[branch].append((ds_wt.dataset_path, wt.path))
-
-    # Determine column width for dataset paths
-    all_paths = [p for p, _, _ in main_group] + [
-        p for entries in branch_groups.values() for p, _ in entries
-    ]
-    col_width = max(len(p) for p in all_paths) + 2 if all_paths else 20
+    entries = (
+        (
+            ds_wt.dataset_path,
+            wt.path,
+            wt.branch or "(detached)",
+            wt.path.resolve() == ds_wt.source.resolve(),
+        )
+        for ds_wt in datasets_with_extras
+        for wt in ds_wt.worktrees
+        if not wt.bare
+    )
+    main_group, branch_groups, super_branch = group_by_branch(entries)
+    col_width = column_width(main_group, branch_groups)
 
     # Print main worktrees group
     if main_group:

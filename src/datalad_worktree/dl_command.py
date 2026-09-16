@@ -176,7 +176,7 @@ try:
             from datalad.distribution.dataset import require_dataset
 
             from datalad_worktree.add import create_nested_worktrees
-            from datalad_worktree.core import WorktreeResult
+            from datalad_worktree.core import SKIPPED_RESULTS, WorktreeResult
 
             ds = require_dataset(
                 dataset,
@@ -210,7 +210,7 @@ try:
                     WorktreeResult.CONFIGURED,
                 ):
                     status = "ok"
-                elif report.result.name.startswith("SKIPPED"):
+                elif report.result in SKIPPED_RESULTS:
                     status = "notneeded"
                 else:
                     status = "error"
@@ -268,34 +268,24 @@ try:
 
         @staticmethod
         def custom_result_summary_renderer(results):
-            from collections import defaultdict
+            from datalad_worktree.list_cmd import column_width, group_by_branch
 
-            main_group = []   # (dataset_path, wt_path, branch)
-            branch_groups = defaultdict(list)  # branch -> [(dataset_path, wt_path)]
-            super_branch = None
-
-            for res in results:
-                if res.get("action") != "worktree-list":
-                    continue
-                ds_path = res.get("dataset_path", ".")
-                wt_path = res.get("path", "")
-                branch = res.get("branch", "") or "(detached)"
-                is_main = res.get("is_main", False)
-
-                if is_main:
-                    main_group.append((ds_path, wt_path, branch))
-                    if ds_path == ".":
-                        super_branch = branch
-                else:
-                    branch_groups[branch].append((ds_path, wt_path))
+            entries = (
+                (
+                    res.get("dataset_path", "."),
+                    res.get("path", ""),
+                    res.get("branch", "") or "(detached)",
+                    res.get("is_main", False),
+                )
+                for res in results
+                if res.get("action") == "worktree-list"
+            )
+            main_group, branch_groups, super_branch = group_by_branch(entries)
 
             if not main_group and not branch_groups:
                 return
 
-            all_paths = [p for p, _, _ in main_group] + [
-                p for entries in branch_groups.values() for p, _ in entries
-            ]
-            col_width = max(len(p) for p in all_paths) + 2 if all_paths else 20
+            col_width = column_width(main_group, branch_groups)
 
             if main_group:
                 header = super_branch or "(unknown)"
