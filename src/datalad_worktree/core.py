@@ -20,17 +20,17 @@ logger = logging.getLogger(__name__)
 
 class WorktreeResult(Enum):
     """Outcome of a single worktree operation."""
-    STARTING = auto()              # about to create/remove (progress indicator)
+    STARTING = auto()              # about to create/delete (progress indicator)
     CREATED = auto()
     CREATED_NEW_BRANCH = auto()
     SKIPPED_NOT_INSTALLED = auto()
     SKIPPED_NOT_GIT_REPO = auto()
     SKIPPED_DRY_RUN = auto()
-    SKIPPED_NO_WORKTREE = auto()   # remove: no worktree found at path/branch
+    SKIPPED_NO_WORKTREE = auto()   # delete: no worktree found at path/branch
     SKIPPED_CONTAINER = auto()     # add: container left unconfigured (see message)
     CONFIGURED = auto()            # add: container bind-mount config written
-    REMOVED = auto()
-    REMOVED_BRANCH = auto()
+    DELETED = auto()
+    DELETED_BRANCH = auto()
     FAILED = auto()
 
 

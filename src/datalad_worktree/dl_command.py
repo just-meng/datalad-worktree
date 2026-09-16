@@ -1,5 +1,5 @@
 """
-DataLad command interfaces for worktree-add, worktree-list, worktree-remove.
+DataLad command interfaces for worktree-add, worktree-list, worktree-delete.
 
 Requires DataLad to be installed.
 """
@@ -301,7 +301,6 @@ try:
                     ))
 
             for branch in sorted(branch_groups):
-                ui.message("")
                 ui.message(ac.color_word(branch, ac.GREEN))
                 for ds_path, wt_path in branch_groups[branch]:
                     ui.message("  {:<{}}{}".format(
@@ -348,31 +347,31 @@ try:
                         type="dataset",
                     )
 
-    # ── worktree-remove ──────────────────────────────────────────────────
+    # ── worktree-delete ──────────────────────────────────────────────────
 
     @build_doc
-    class WorktreeRemove(Interface):
-        """Remove nested worktrees by path or branch name.
+    class WorktreeDelete(Interface):
+        """Delete nested worktrees by path or branch name.
 
-        Accepts either a worktree path or a branch name. Removes the
+        Accepts either a worktree path or a branch name. Deletes the
         corresponding worktree from each dataset in the hierarchy.
         Datasets that don't have a matching worktree are skipped.
 
         Examples::
 
-            # Remove by path
-            datalad worktree-remove /tmp/wt/my-feature
+            # Delete by path
+            datalad worktree-delete /tmp/wt/my-feature
 
-            # Remove by branch name
-            datalad worktree-remove feature/x
+            # Delete by branch name
+            datalad worktree-delete feature/x
 
             # Also delete the branch
-            datalad worktree-remove --delete-branch feature/x
+            datalad worktree-delete --delete-branch feature/x
         """
 
         @staticmethod
         def custom_result_renderer(res, **kwargs):
-            if res["action"] != "worktree-remove":
+            if res["action"] != "worktree-delete":
                 default_result_renderer(res)
                 return
             status = res.get("status", "")
@@ -382,12 +381,12 @@ try:
             if status == "ok":
                 if res.get("branch_deleted"):
                     ui.message("{} {} branch '{}'".format(
-                        ac.color_word("remove", ac.GREEN),
+                        ac.color_word("delete", ac.GREEN),
                         label, res.get("branch", ""),
                     ))
                 else:
                     ui.message("{} {} -> {}".format(
-                        ac.color_word("remove", ac.GREEN),
+                        ac.color_word("delete", ac.GREEN),
                         label, dest,
                     ))
             elif status == "notneeded":
@@ -403,16 +402,16 @@ try:
 
         @staticmethod
         def custom_result_summary_renderer(results):
-            removed = 0
+            deleted = 0
             skipped = 0
             for res in results:
-                if res.get("action") != "worktree-remove":
+                if res.get("action") != "worktree-delete":
                     continue
                 if res.get("status") == "ok" and not res.get("branch_deleted"):
-                    removed += 1
+                    deleted += 1
                 elif res.get("status") == "notneeded":
                     skipped += 1
-            parts = [f"{removed} removed"]
+            parts = [f"{deleted} deleted"]
             if skipped:
                 parts.append(f"{skipped} skipped")
             ui.message(", ".join(parts))
@@ -420,7 +419,7 @@ try:
         _params_ = dict(
             target=Parameter(
                 args=("target",),
-                doc="Worktree path or branch name to remove",
+                doc="Worktree path or branch name to delete",
                 constraints=EnsureStr(),
             ),
             dataset=Parameter(
@@ -436,7 +435,7 @@ try:
             ),
             force=Parameter(
                 args=("-f", "--force"),
-                doc="Force removal even with uncommitted changes; "
+                doc="Force deletion even with uncommitted changes; "
                     "force-delete branch",
                 action="store_true",
                 default=False,
@@ -454,23 +453,23 @@ try:
             from datalad.distribution.dataset import require_dataset
 
             from datalad_worktree.core import WorktreeResult
-            from datalad_worktree.remove import remove_nested_worktrees
+            from datalad_worktree.delete import delete_nested_worktrees
 
             ds = require_dataset(
                 dataset,
                 check_installed=True,
-                purpose="remove nested worktrees",
+                purpose="delete nested worktrees",
             )
 
-            for report in remove_nested_worktrees(
+            for report in delete_nested_worktrees(
                 superds_path=Path(ds.path),
                 target=target,
                 delete_branch=delete_branch,
                 force=force,
             ):
-                if report.result == WorktreeResult.REMOVED:
+                if report.result == WorktreeResult.DELETED:
                     status = "ok"
-                elif report.result == WorktreeResult.REMOVED_BRANCH:
+                elif report.result == WorktreeResult.DELETED_BRANCH:
                     status = "ok"
                 elif report.result == WorktreeResult.SKIPPED_NO_WORKTREE:
                     status = "notneeded"
@@ -478,14 +477,14 @@ try:
                     status = "error"
 
                 yield get_status_dict(
-                    action="worktree-remove",
+                    action="worktree-delete",
                     ds=ds,
                     path=str(report.destination),
                     status=status,
                     message=report.message,
                     dataset_path=report.dataset_path,
                     branch=report.branch,
-                    branch_deleted=report.result == WorktreeResult.REMOVED_BRANCH,
+                    branch_deleted=report.result == WorktreeResult.DELETED_BRANCH,
                     type="dataset",
                 )
 
@@ -508,7 +507,7 @@ except ImportError:
                 "DataLad is not installed. Use the standalone CLI: worktree"
             )
 
-    class WorktreeRemove:
+    class WorktreeDelete:
         """Placeholder when DataLad is not installed."""
         def __call__(self, *args, **kwargs):
             raise RuntimeError(

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
 
 from datalad_worktree.cli import _Colors, _render_report, build_parser, main
 from datalad_worktree.core import WorktreeReport, WorktreeResult
@@ -45,17 +43,17 @@ class TestBuildParser:
         args = parser.parse_args(["list"])
         assert args.command == "list"
 
-    def test_remove_command(self):
+    def test_delete_command(self):
         parser = build_parser()
-        args = parser.parse_args(["remove", "feat/x"])
-        assert args.command == "remove"
+        args = parser.parse_args(["delete", "feat/x"])
+        assert args.command == "delete"
         assert args.target == "feat/x"
         assert args.delete_branch is False
         assert args.force is False
 
-    def test_remove_with_flags(self):
+    def test_delete_with_flags(self):
         parser = build_parser()
-        args = parser.parse_args(["remove", "--delete-branch", "-f", "feat/x"])
+        args = parser.parse_args(["delete", "--delete-branch", "-f", "feat/x"])
         assert args.delete_branch is True
         assert args.force is True
 
@@ -124,17 +122,17 @@ class TestRenderReport:
         assert "skip" in out
         assert "no worktree" in out
 
-    def test_removed(self, capsys):
-        _render_report(self._make_report(WorktreeResult.REMOVED))
+    def test_deleted(self, capsys):
+        _render_report(self._make_report(WorktreeResult.DELETED))
         out = capsys.readouterr().out
-        assert "remove" in out
+        assert "delete" in out
         assert "sub-01" in out
         assert "/dst/sub-01" in out
 
-    def test_removed_branch(self, capsys):
-        _render_report(self._make_report(WorktreeResult.REMOVED_BRANCH))
+    def test_deleted_branch(self, capsys):
+        _render_report(self._make_report(WorktreeResult.DELETED_BRANCH))
         out = capsys.readouterr().out
-        assert "remove" in out
+        assert "delete" in out
         assert "branch" in out
         assert "feat/x" in out
 
@@ -149,9 +147,20 @@ class TestRenderReport:
 
 
 class TestMainCLI:
-    def test_no_subcommand_returns_1(self):
+    def test_bare_invocation_lists(self, superds: dict, monkeypatch, capsys):
+        """`worktree` with no subcommand behaves like `worktree list`."""
+        main([
+            "--no-color", "add",
+            "-d", str(superds["super"]),
+            str(superds["wt_location"] / "bare-test"), "feat/bare",
+        ])
+        capsys.readouterr()
+
+        monkeypatch.chdir(superds["super"])
         exit_code = main(["--no-color"])
-        assert exit_code == 1
+        out = capsys.readouterr().out
+        assert exit_code == 0
+        assert "feat/bare" in out
 
     def test_add_dry_run_succeeds(self, superds: dict):
         exit_code = main([
@@ -190,23 +199,23 @@ class TestMainCLI:
         ])
         assert exit_code == 0
 
-    def test_remove_by_branch_succeeds(self, superds: dict):
+    def test_delete_by_branch_succeeds(self, superds: dict):
         # First create worktrees
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
             str(superds["wt_location"] / "rm-test"), "feat/rm-test",
         ])
-        # Then remove them
+        # Then delete them
         exit_code = main([
-            "--no-color", "remove", "--yes",
+            "--no-color", "delete", "--yes",
             "-d", str(superds["super"]),
             "feat/rm-test",
         ])
         assert exit_code == 0
         assert not (superds["wt_location"] / "rm-test").exists()
 
-    def test_remove_by_path_succeeds(self, superds: dict):
+    def test_delete_by_path_succeeds(self, superds: dict):
         wt_path = superds["wt_location"] / "rm-path-test"
         main([
             "--no-color", "add",
@@ -214,7 +223,7 @@ class TestMainCLI:
             str(wt_path), "feat/rm-path",
         ])
         exit_code = main([
-            "--no-color", "remove", "--yes",
+            "--no-color", "delete", "--yes",
             "-d", str(superds["super"]),
             str(wt_path),
         ])
@@ -225,7 +234,7 @@ class TestMainCLI:
 class TestCLISummaryOutput:
     """Test that summary lines are printed correctly."""
 
-    def test_add_and_remove_summary_lines(self, superds: dict, capsys):
+    def test_add_and_delete_summary_lines(self, superds: dict, capsys):
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
@@ -235,12 +244,12 @@ class TestCLISummaryOutput:
         assert "4 created" in add_out
 
         main([
-            "--no-color", "remove", "--yes",
+            "--no-color", "delete", "--yes",
             "-d", str(superds["super"]),
             "feat/sum",
         ])
         rm_out = capsys.readouterr().out
-        assert "4 removed" in rm_out
+        assert "4 deleted" in rm_out
 
     def test_add_dry_run_summary(self, superds: dict, capsys):
         main([
@@ -270,19 +279,19 @@ class TestCLISummaryOutput:
         out = capsys.readouterr().out
         assert "skipped" in out
 
-    def test_remove_summary_with_skipped(self, superds: dict, capsys):
+    def test_delete_summary_with_skipped(self, superds: dict, capsys):
         main([
-            "--no-color", "remove", "--yes",
+            "--no-color", "delete", "--yes",
             "-d", str(superds["super"]),
             "nonexistent/branch/xyz",
         ])
         out = capsys.readouterr().out
-        assert "0 removed" in out
+        assert "0 deleted" in out
         assert "skipped" in out
 
 
-class TestRemoveConfirmation:
-    """Test the removal confirmation prompt."""
+class TestDeleteConfirmation:
+    """Test the deletion confirmation prompt."""
 
     def test_preview_shown(self, superds: dict, capsys, monkeypatch):
         """Preview lists directories before prompting."""
@@ -296,12 +305,12 @@ class TestRemoveConfirmation:
         # Simulate user typing "n"
         monkeypatch.setattr("builtins.input", lambda _: "n")
         exit_code = main([
-            "--no-color", "remove",
+            "--no-color", "delete",
             "-d", str(superds["super"]),
             "feat/confirm",
         ])
         out = capsys.readouterr().out
-        assert "Will remove" in out
+        assert "Will delete" in out
         assert "Proceed?" not in out  # input() swallows the prompt
         assert "Aborted" in out
         assert exit_code == 1
@@ -318,7 +327,7 @@ class TestRemoveConfirmation:
 
         monkeypatch.setattr("builtins.input", lambda _: "y")
         exit_code = main([
-            "--no-color", "remove",
+            "--no-color", "delete",
             "-d", str(superds["super"]),
             "feat/confirm-y",
         ])
@@ -326,7 +335,7 @@ class TestRemoveConfirmation:
         assert not (superds["wt_location"] / "confirm-y").exists()
 
     def test_eof_aborts(self, superds: dict, monkeypatch):
-        """EOF (piped input) aborts removal."""
+        """EOF (piped input) aborts deletion."""
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
@@ -338,7 +347,7 @@ class TestRemoveConfirmation:
 
         monkeypatch.setattr("builtins.input", raise_eof)
         exit_code = main([
-            "--no-color", "remove",
+            "--no-color", "delete",
             "-d", str(superds["super"]),
             "feat/confirm-eof",
         ])
@@ -356,7 +365,7 @@ class TestRemoveConfirmation:
 
         monkeypatch.setattr("builtins.input", lambda _: "n")
         main([
-            "--no-color", "remove", "--delete-branch",
+            "--no-color", "delete", "--delete-branch",
             "-d", str(superds["super"]),
             "feat/confirm-br",
         ])

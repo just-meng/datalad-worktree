@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`datalad-worktree` is a Python tool and DataLad extension that manages nested git worktrees for DataLad dataset hierarchies. It provides three subcommands: `add` (create), `list`, and `remove` for worktrees across a superdataset and all its subdatasets.
+`datalad-worktree` is a Python tool and DataLad extension that manages nested git worktrees for DataLad dataset hierarchies. It provides three subcommands: `add` (create), `list`, and `delete` for worktrees across a superdataset and all its subdatasets. Running `worktree` with no subcommand defaults to `list`.
 
 ## Repository Structure
 
@@ -21,10 +21,10 @@ datalad-worktree/
         ├── core.py        # Shared types (WorktreeResult, WorktreeReport), validation, git helpers
         ├── add.py         # Add command: create nested worktrees with pre-flight check
         ├── list_cmd.py    # List command: show worktrees across hierarchy
-        ├── remove.py      # Remove command: remove worktrees by path or branch
+        ├── delete.py      # Delete command: delete worktrees by path or branch
         ├── container.py   # Container bind-mount config for created worktrees
         ├── discovery.py   # Subdataset discovery via recursive .gitmodules parsing
-        └── dl_command.py  # DataLad Interface classes: WorktreeAdd, WorktreeList, WorktreeRemove
+        └── dl_command.py  # DataLad Interface classes: WorktreeAdd, WorktreeList, WorktreeDelete
 ```
 
 ## Build and Run
@@ -39,7 +39,7 @@ datalad worktree-add /tmp/wt branch   # requires datalad
 python -m datalad_worktree add /tmp/wt branch
 
 # Run tests
-uv run --extra dev pytest
+uv run --dev pytest
 ```
 
 ## Architecture
@@ -47,8 +47,8 @@ uv run --extra dev pytest
 ### Subcommands
 
 - **`add`**: Creates worktrees for superdataset + all installed subdatasets. Runs pre-flight check first — if any would fail, none are created.
-- **`list`**: Shows all worktrees across the hierarchy (only datasets with extra worktrees beyond main).
-- **`remove`**: Removes worktrees by path or branch name. Processes deepest-first. Optional `--delete-branch`.
+- **`list`**: Shows all worktrees across the hierarchy (only datasets with extra worktrees beyond main). Also the default when no subcommand is given.
+- **`delete`**: Deletes worktrees by path or branch name. Processes deepest-first. Optional `--delete-branch`.
 
 ### Call Flow (add)
 
@@ -60,20 +60,20 @@ uv run --extra dev pytest
 ### Key Design Decisions
 
 - **Discovery via .gitmodules**: Recursively parses `.gitmodules` with `configparser`. Fast, no dependencies.
-- **Generator-based**: `create_nested_worktrees()` and `remove_nested_worktrees()` yield `WorktreeReport` objects one at a time, enabling real-time progress display.
+- **Generator-based**: `create_nested_worktrees()` and `delete_nested_worktrees()` yield `WorktreeReport` objects one at a time, enabling real-time progress display.
 - **Pre-flight validation (add)**: Before creating anything, checks for branch conflicts (`git_branch_checked_out_at`) and existing paths. All-or-nothing: if any non-skipped dataset would fail, no worktrees are created.
-- **Deepest-first removal**: `remove` processes subdatasets in reverse order so children are removed before parents.
+- **Deepest-first deletion**: `delete` processes subdatasets in reverse order so children are deleted before parents.
 - **Sorted by path (add)**: Subdatasets are sorted so parents are processed before children.
 - **Gitlink cleanup**: When the superds worktree is created, git places gitlink files at submodule mount points. `_prepare_destination()` in `add.py` removes these before creating each subdataset worktree.
 - **Container bind mounts (add)**: After the worktrees exist, `container.py` configures any dataset registering a container with a `cmdexec`, so `datalad containers-run` can reach the annex objects that live in the main repo outside the worktree (datalad-container#288). Two `git config --worktree` writes (the `bindpaths` substitution and a `cmdexec` carrying `{{bindpaths}}`) keep machine-specific values out of the main checkout and out of git history; one committed empty `bindpaths` in `.datalad/config` keeps run records rerunnable, since `run` records substitutions unexpanded. Skipped via `--no-bindpaths`.
 - **Failure isolation**: A failed subdataset does not abort remaining ones. Only a superds failure is fatal.
 - **Branch logic is per-dataset**: If branch exists, checkout. If not, create with `-b`. Evaluated independently.
 - **All git interactions** go through `subprocess.run()` with `capture_output=True, text=True`. No gitpython dependency.
-- **Remove fallback**: `git worktree remove` may fail on DataLad repos where `.git` is a directory instead of a gitlink file. Falls back to `shutil.rmtree` + `git worktree prune`.
+- **Delete fallback**: `git worktree remove` may fail on DataLad repos where `.git` is a directory instead of a gitlink file. Falls back to `shutil.rmtree` + `git worktree prune`.
 
 ### Result Types
 
-- `WorktreeResult` (enum): `CREATED`, `CREATED_NEW_BRANCH`, `SKIPPED_NOT_INSTALLED`, `SKIPPED_NOT_GIT_REPO`, `SKIPPED_DRY_RUN`, `SKIPPED_NO_WORKTREE`, `SKIPPED_CONTAINER`, `CONFIGURED`, `REMOVED`, `REMOVED_BRANCH`, `FAILED`
+- `WorktreeResult` (enum): `CREATED`, `CREATED_NEW_BRANCH`, `SKIPPED_NOT_INSTALLED`, `SKIPPED_NOT_GIT_REPO`, `SKIPPED_DRY_RUN`, `SKIPPED_NO_WORKTREE`, `SKIPPED_CONTAINER`, `CONFIGURED`, `DELETED`, `DELETED_BRANCH`, `FAILED`
 - `WorktreeReport` (dataclass): one per dataset, holds source, destination, result, branch, message
 - `SubDataset` (dataclass in `discovery.py`): holds `rel_path`, `abs_path`, `installed`, `depth`
 - `GitWorktreeEntry` (dataclass in `core.py`): parsed from `git worktree list --porcelain`
@@ -82,8 +82,8 @@ uv run --extra dev pytest
 ### DataLad Extension Registration
 
 - `__init__.py` exports `command_suite` tuple with three commands
-- `dl_command.py` defines `WorktreeAdd`, `WorktreeList`, `WorktreeRemove` (all `Interface` subclasses)
-- DataLad command names: `worktree-add`, `worktree-list`, `worktree-remove`
+- `dl_command.py` defines `WorktreeAdd`, `WorktreeList`, `WorktreeDelete` (all `Interface` subclasses)
+- DataLad command names: `worktree-add`, `worktree-list`, `worktree-delete`
 - `pyproject.toml` registers under `[project.entry-points."datalad.extensions"]`
 - `dl_command.py` gracefully degrades to stub classes when DataLad is not installed
 
@@ -111,7 +111,7 @@ uv run --extra dev pytest
 - `_prepare_destination()` handles three filesystem states (gitlink file, empty dir, dir with only `.git`) — each needs a test case
 - `create_nested_worktrees()` is a generator — wrap in `list()` when testing with `pytest.raises`
 - Pre-flight check tests: verify that nothing is created when a branch conflict exists
-- Remove tests: verify deepest-first ordering, path vs branch resolution, `--delete-branch` behavior
+- Delete tests: verify deepest-first ordering, path vs branch resolution, `--delete-branch` behavior
 - Container tests: `tests/test_containers_run.py` runs `datalad containers-run` for real against `tests/fake_container_runtime.py`, a stand-in for `singularity exec` that parses `-B` and executes under `unshare -Urm`, masking paths with tmpfs. Needs `datalad-container` (dev dependency) and unprivileged user/mount namespaces; both are skip-guarded. `test_fails_without_bindpaths` must keep failing-without-the-fix, otherwise the positive test proves nothing.
 
 ## Dependencies

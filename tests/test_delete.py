@@ -1,16 +1,15 @@
-"""Tests for the remove command."""
+"""Tests for the delete command."""
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from datalad_worktree.add import create_nested_worktrees
 from datalad_worktree.core import WorktreeResult
-from datalad_worktree.remove import (
+from datalad_worktree.delete import (
     _git_worktree_remove,
     _resolve_target,
-    remove_nested_worktrees,
+    delete_nested_worktrees,
 )
 from tests.conftest import _git
 
@@ -44,22 +43,22 @@ class TestResolveTarget:
         assert _resolve_target("feat/my-feature") == "branch"
 
 
-class TestRemoveByPath:
-    def test_removes_all_worktrees(self, superds: dict):
+class TestDeleteByPath:
+    def test_deletes_all_worktrees(self, superds: dict):
         wt_path = _create_worktrees(superds, "rm-test", "feat/rm")
         assert wt_path.exists()
 
-        reports = list(remove_nested_worktrees(
+        reports = list(delete_nested_worktrees(
             superds_path=superds["super"],
             target=str(wt_path),
         ))
-        removed = [r for r in reports if r.result == WorktreeResult.REMOVED]
-        assert len(removed) == 4  # super + 3 subs
+        deleted = [r for r in reports if r.result == WorktreeResult.DELETED]
+        assert len(deleted) == 4  # super + 3 subs
         assert not wt_path.exists()
 
     def test_skips_missing_worktrees(self, superds: dict):
-        """Removing a nonexistent path skips all datasets."""
-        reports = list(remove_nested_worktrees(
+        """Deleting a nonexistent path skips all datasets."""
+        reports = list(delete_nested_worktrees(
             superds_path=superds["super"],
             target="/tmp/nonexistent-worktree-path-xyz",
         ))
@@ -68,38 +67,38 @@ class TestRemoveByPath:
         )
 
     def test_deepest_first_ordering(self, superds: dict):
-        """Worktrees are removed deepest-first (children before parents)."""
+        """Worktrees are deleted deepest-first (children before parents)."""
         wt_path = _create_worktrees(superds, "rm-order", "feat/rm-order")
 
-        reports = list(remove_nested_worktrees(
+        reports = list(delete_nested_worktrees(
             superds_path=superds["super"],
             target=str(wt_path),
         ))
-        removed_paths = [
+        deleted_paths = [
             r.dataset_path for r in reports
-            if r.result == WorktreeResult.REMOVED
+            if r.result == WorktreeResult.DELETED
         ]
         # sub-01/derivatives must come before sub-01, and both before "."
-        assert removed_paths.index("sub-01/derivatives") < removed_paths.index("sub-01")
-        assert removed_paths.index("sub-01") < removed_paths.index(".")
-        assert removed_paths.index("sub-02") < removed_paths.index(".")
+        assert deleted_paths.index("sub-01/derivatives") < deleted_paths.index("sub-01")
+        assert deleted_paths.index("sub-01") < deleted_paths.index(".")
+        assert deleted_paths.index("sub-02") < deleted_paths.index(".")
 
 
-class TestRemoveByBranch:
-    def test_removes_by_branch(self, superds: dict):
+class TestDeleteByBranch:
+    def test_deletes_by_branch(self, superds: dict):
         wt_path = _create_worktrees(superds, "rm-branch", "feat/rm-branch")
         assert wt_path.exists()
 
-        reports = list(remove_nested_worktrees(
+        reports = list(delete_nested_worktrees(
             superds_path=superds["super"],
             target="feat/rm-branch",
         ))
-        removed = [r for r in reports if r.result == WorktreeResult.REMOVED]
-        assert len(removed) == 4
+        deleted = [r for r in reports if r.result == WorktreeResult.DELETED]
+        assert len(deleted) == 4
         assert not wt_path.exists()
 
     def test_skips_nonexistent_branch(self, superds: dict):
-        reports = list(remove_nested_worktrees(
+        reports = list(delete_nested_worktrees(
             superds_path=superds["super"],
             target="nonexistent/branch/xyz",
         ))
@@ -108,9 +107,9 @@ class TestRemoveByBranch:
         )
 
 
-class TestRemoveWithForce:
-    def test_force_removes_dirty_worktree(self, superds: dict):
-        """--force removes worktrees even with uncommitted changes."""
+class TestDeleteWithForce:
+    def test_force_deletes_dirty_worktree(self, superds: dict):
+        """--force deletes worktrees even with uncommitted changes."""
         wt_path = _create_worktrees(superds, "rm-force", "feat/rm-force")
 
         # Make the worktree dirty (uncommitted changes)
@@ -119,13 +118,13 @@ class TestRemoveWithForce:
 
         # Without force, git worktree remove would refuse
         # With force, it should succeed
-        reports = list(remove_nested_worktrees(
+        reports = list(delete_nested_worktrees(
             superds_path=superds["super"],
             target="feat/rm-force",
             force=True,
         ))
-        removed = [r for r in reports if r.result == WorktreeResult.REMOVED]
-        assert len(removed) == 4
+        deleted = [r for r in reports if r.result == WorktreeResult.DELETED]
+        assert len(deleted) == 4
         assert not wt_path.exists()
 
     def test_force_delete_branch_unmerged(self, superds: dict):
@@ -137,43 +136,43 @@ class TestRemoveWithForce:
         _git(wt_path, "add", "new-file.txt")
         _git(wt_path, "commit", "-m", "branch-only commit")
 
-        reports = list(remove_nested_worktrees(
+        reports = list(delete_nested_worktrees(
             superds_path=superds["super"],
             target="feat/force-del",
             delete_branch=True,
             force=True,
         ))
-        removed_branches = [
-            r for r in reports if r.result == WorktreeResult.REMOVED_BRANCH
+        deleted_branches = [
+            r for r in reports if r.result == WorktreeResult.DELETED_BRANCH
         ]
         # At least the super's branch should be force-deleted
-        assert len(removed_branches) >= 1
+        assert len(deleted_branches) >= 1
 
         # Verify the branch is gone from the superdataset
         out = _git(superds["super"], "branch", "--list", "feat/force-del")
         assert out.stdout.strip() == ""
 
 
-class TestRemoveWithDeleteBranch:
+class TestDeleteWithDeleteBranch:
     def test_deletes_branch(self, superds: dict):
         wt_path = _create_worktrees(superds, "rm-delbr", "feat/del-branch")
 
-        reports = list(remove_nested_worktrees(
+        reports = list(delete_nested_worktrees(
             superds_path=superds["super"],
             target="feat/del-branch",
             delete_branch=True,
         ))
-        removed_branches = [
-            r for r in reports if r.result == WorktreeResult.REMOVED_BRANCH
+        deleted_branches = [
+            r for r in reports if r.result == WorktreeResult.DELETED_BRANCH
         ]
-        assert len(removed_branches) == 4
+        assert len(deleted_branches) == 4
 
         # Verify the branch is gone
         out = _git(superds["super"], "branch", "--list", "feat/del-branch")
         assert out.stdout.strip() == ""
 
 
-class TestRemoveFallback:
+class TestDeleteFallback:
     def test_fallback_when_git_dir_is_directory(self, superds: dict):
         """When .git is a directory (not gitlink), git worktree remove fails.
 

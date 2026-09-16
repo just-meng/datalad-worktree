@@ -11,7 +11,7 @@ try:
     from datalad.distribution.dataset import Dataset
     from datalad.interface.base import Interface
 
-    from datalad_worktree.dl_command import WorktreeAdd, WorktreeList, WorktreeRemove
+    from datalad_worktree.dl_command import WorktreeAdd, WorktreeDelete, WorktreeList
 
     # Verify these are real DataLad Interface classes, not stubs
     HAS_DATALAD = issubclass(WorktreeAdd, Interface)
@@ -152,7 +152,7 @@ class TestWorktreeList:
         assert len(non_main) == 4
 
 
-class TestWorktreeRemove:
+class TestWorktreeDelete:
     def _setup_worktrees(self, superds, name, branch):
         _call_interface(
             WorktreeAdd,
@@ -161,12 +161,12 @@ class TestWorktreeRemove:
             dataset=str(superds["super"]),
         )
 
-    def test_remove_by_branch(self, superds: dict):
-        """Remove by branch, and check the result-dict shape while at it."""
+    def test_delete_by_branch(self, superds: dict):
+        """Delete by branch, and check the result-dict shape while at it."""
         self._setup_worktrees(superds, "dl-rm", "feat/dl-rm")
 
         results = _call_interface(
-            WorktreeRemove,
+            WorktreeDelete,
             target="feat/dl-rm",
             dataset=str(superds["super"]),
         )
@@ -178,19 +178,19 @@ class TestWorktreeRemove:
         assert not (superds["wt_location"] / "dl-rm").exists()
 
         for res in results:
-            assert res["action"] == "worktree-remove"
+            assert res["action"] == "worktree-delete"
             assert "path" in res
             assert "status" in res
             assert "branch" in res
             assert "dataset_path" in res
             assert res["type"] == "dataset"
 
-    def test_remove_by_path(self, superds: dict):
+    def test_delete_by_path(self, superds: dict):
         wt_path = superds["wt_location"] / "dl-rm-path"
         self._setup_worktrees(superds, "dl-rm-path", "feat/dl-rm-path")
 
         results = _call_interface(
-            WorktreeRemove,
+            WorktreeDelete,
             target=str(wt_path),
             dataset=str(superds["super"]),
         )
@@ -206,7 +206,7 @@ class TestWorktreeRemove:
         self._setup_worktrees(superds, "dl-rm-delbr", "feat/dl-delbr")
 
         results = _call_interface(
-            WorktreeRemove,
+            WorktreeDelete,
             target="feat/dl-delbr",
             dataset=str(superds["super"]),
             delete_branch=True,
@@ -216,7 +216,7 @@ class TestWorktreeRemove:
 
     def test_skip_nonexistent_branch(self, superds: dict):
         results = _call_interface(
-            WorktreeRemove,
+            WorktreeDelete,
             target="nonexistent/dl-xyz",
             dataset=str(superds["super"]),
         )

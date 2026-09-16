@@ -73,7 +73,7 @@ class TestAddPlaceholder:
     def test_already_configured(self):
         new, reason = add_placeholder("singularity exec {{bindpaths}} {img} {cmd}")
         assert new is None
-        assert reason == "already configured"
+        assert reason == "cmdexec already contains {{bindpaths}}"
 
     def test_no_anchor(self):
         new, reason = add_placeholder("mycontainer-wrapper {cmd}")
