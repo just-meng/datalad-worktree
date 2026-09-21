@@ -38,10 +38,10 @@ SUBSTITUTION_KEY = "datalad.run.substitutions.bindpaths"
 PLACEHOLDER = "{{bindpaths}}"
 IMG_ANCHOR = "{img}"
 DATALAD_CONFIG = Path(".datalad") / "config"
+# Marked like datalad's own "[DATALAD RUNCMD]" so it is visually evident in
+# the log that the extension wrote this commit, not the user.
 FALLBACK_COMMIT_MSG = (
-    "Add empty bindpaths substitution\n\n"
-    "Keeps run records made in a worktree rerunnable where no worktree\n"
-    "bind-mount configuration exists. See datalad/datalad-container#288."
+    "[DATALAD WORKTREE] Add empty bindpaths substitution to .datalad/config"
 )
 
 _CMDEXEC_RE = re.compile(r"^datalad\.containers\.(?P<name>.+)\.cmdexec$")
