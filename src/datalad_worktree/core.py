@@ -29,6 +29,7 @@ class WorktreeResult(Enum):
     SKIPPED_NO_WORKTREE = auto()   # delete: no worktree found at path/branch
     SKIPPED_CONTAINER = auto()     # add: container left unconfigured (see message)
     CONFIGURED = auto()            # add: container bind-mount config written
+    MTIMES_SYNCED = auto()         # add: mtimes copied from the source working tree
     DELETED = auto()
     DELETED_BRANCH = auto()
     FAILED = auto()

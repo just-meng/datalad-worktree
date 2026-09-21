@@ -67,6 +67,8 @@ def _render_report(report: WorktreeReport) -> None:
         print(f"{C.YELLOW}skip{C.NC}   {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.CONFIGURED:
         print(f"{C.GREEN}config{C.NC} {label} {C.DIM}({report.message}){C.NC}")
+    elif report.result == WorktreeResult.MTIMES_SYNCED:
+        print(f"{C.GREEN}mtimes{C.NC} {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.DELETED:
         print(f"{C.GREEN}delete{C.NC} {label} -> {dest}")
     elif report.result == WorktreeResult.DELETED_BRANCH:
@@ -124,6 +126,10 @@ def build_parser():
     add_p.add_argument(
         "--no-bindpaths", action="store_true", default=False,
         help="don't configure container bind mounts for datalad containers-run",
+    )
+    add_p.add_argument(
+        "--no-mtimes", action="store_true", default=False,
+        help="don't copy file mtimes from the source working trees",
     )
     add_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
@@ -190,6 +196,7 @@ def _cmd_add(args) -> int:
             force=args.force,
             dry_run=args.dry_run,
             configure_containers=not args.no_bindpaths,
+            preserve_mtimes=not args.no_mtimes,
         ):
             _render_report(report)
             if report.result == WorktreeResult.STARTING:

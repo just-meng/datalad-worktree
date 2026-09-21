@@ -60,6 +60,11 @@ try:
                     ac.color_word("config", ac.GREEN),
                     label, res.get("message", ""),
                 ))
+            elif res.get("mtimes"):
+                ui.message("{} {} ({})".format(
+                    ac.color_word("mtimes", ac.GREEN),
+                    label, res.get("message", ""),
+                ))
             elif status == "ok":
                 extra = ""
                 if res.get("new_branch"):
@@ -100,7 +105,7 @@ try:
                     worktree_root = res["worktree_root"]
                 if res.get("dry_run"):
                     is_dry_run = True
-                if res.get("container"):
+                if res.get("container") or res.get("mtimes"):
                     continue  # not a worktree, don't count it as one
                 if res.get("status") == "ok":
                     created += 1
@@ -160,6 +165,13 @@ try:
                 action="store_true",
                 default=False,
             ),
+            no_mtimes=Parameter(
+                args=("--no-mtimes",),
+                doc="""Don't copy file mtimes from the source working
+                trees into the created worktrees""",
+                action="store_true",
+                default=False,
+            ),
         )
 
         @staticmethod
@@ -172,6 +184,7 @@ try:
             force=False,
             dry_run=False,
             no_bindpaths=False,
+            no_mtimes=False,
         ):
             from datalad.distribution.dataset import require_dataset
 
@@ -195,6 +208,7 @@ try:
                 force=force,
                 dry_run=dry_run,
                 configure_containers=not no_bindpaths,
+                preserve_mtimes=not no_mtimes,
             ):
                 if report.result == WorktreeResult.STARTING:
                     # Progress indicator — render directly, don't yield
@@ -206,6 +220,7 @@ try:
                     WorktreeResult.CREATED,
                     WorktreeResult.CREATED_NEW_BRANCH,
                     WorktreeResult.CONFIGURED,
+                    WorktreeResult.MTIMES_SYNCED,
                 ):
                     status = "ok"
                 elif report.result in SKIPPED_RESULTS:
@@ -234,6 +249,7 @@ try:
                     skip_reason=skip_reason,
                     dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
                     container_config=report.result == WorktreeResult.CONFIGURED,
+                    mtimes=report.result == WorktreeResult.MTIMES_SYNCED,
                     container=report.result in (
                         WorktreeResult.CONFIGURED,
                         WorktreeResult.SKIPPED_CONTAINER,

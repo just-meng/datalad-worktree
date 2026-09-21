@@ -40,7 +40,10 @@ class TestWorktreeAdd:
             branch="feat/dl-add",
             dataset=str(superds["super"]),
         )
-        ok_results = [r for r in results if r["status"] == "ok"]
+        ok_results = [
+            r for r in results
+            if r["status"] == "ok" and not r.get("mtimes")
+        ]
         assert len(ok_results) == 4
         assert wt_path.is_dir()
         assert (wt_path / "sub-01" / ".git").exists()

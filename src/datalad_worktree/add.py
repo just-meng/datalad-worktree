@@ -19,6 +19,7 @@ from datalad_worktree.core import (
     validate_superds,
 )
 from datalad_worktree.discovery import SubDataset, discover_subdatasets, is_git_repo
+from datalad_worktree.mtimes import sync_dataset
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,7 @@ def create_nested_worktrees(
     force: bool = False,
     dry_run: bool = False,
     configure_containers: bool = True,
+    preserve_mtimes: bool = True,
 ) -> Iterator[WorktreeReport]:
     """
     Create nested git worktrees for a DataLad superdataset and all its subdatasets.
@@ -176,6 +178,13 @@ def create_nested_worktrees(
     registers a container gets bind-mount configuration so that
     ``datalad containers-run`` can reach the git-annex object store, which
     lives in the main repository outside the worktree.
+
+    Unless ``preserve_mtimes`` is False, every created worktree then has the
+    mtimes of its unchanged files copied over from the working tree it was
+    made from. This runs last, and across all datasets at once, because the
+    ordering it repairs is the *cross-dataset* one: checking the
+    superdataset out before its subdatasets leaves every file in a ``code/``
+    subdataset newer than every output derived from it.
 
     Yields
     ------
@@ -190,8 +199,8 @@ def create_nested_worktrees(
     superds_path = validate_superds(superds_path)
     worktree_root = worktree_path.resolve()
 
-    # (dataset_path, worktree) for every worktree actually created
-    created_worktrees: list[tuple[str, Path]] = []
+    # (dataset_path, source working tree, worktree) for every one created
+    created_worktrees: list[tuple[str, Path, Path]] = []
 
     # ── Discover subdatasets ─────────────────────────────────────────────
     subdatasets = discover_subdatasets(superds_path)
@@ -255,7 +264,7 @@ def create_nested_worktrees(
         if wt_result == WorktreeResult.FAILED:
             return
 
-        created_worktrees.append((".", worktree_root))
+        created_worktrees.append((".", superds_path, worktree_root))
 
     # ── Create subdataset worktrees ──────────────────────────────────────
     for subds in subdatasets:
@@ -321,14 +330,26 @@ def create_nested_worktrees(
         )
 
         if wt_result != WorktreeResult.FAILED:
-            created_worktrees.append((subds.rel_path, dest_subds))
+            created_worktrees.append((subds.rel_path, subds.abs_path, dest_subds))
 
     # ── Configure container bind mounts ──────────────────────────────────
     if configure_containers and not dry_run:
-        for dataset_path, dest in created_worktrees:
+        for dataset_path, _source, dest in created_worktrees:
             yield from configure_dataset(
                 dataset_path=dataset_path,
                 worktree_path=dest,
                 main_superds=superds_path,
+                branch=branch,
+            )
+
+    # ── Copy mtimes from the source working trees ────────────────────────
+    # Last, so that anything the steps above wrote (the container step
+    # commits .datalad/config) is already in place.
+    if preserve_mtimes and not dry_run:
+        for dataset_path, source, dest in created_worktrees:
+            yield from sync_dataset(
+                dataset_path=dataset_path,
+                source=source,
+                worktree_path=dest,
                 branch=branch,
             )
