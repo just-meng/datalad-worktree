@@ -520,6 +520,9 @@ try:
 
         Examples::
 
+            # Sync the worktree on branch 'runs', from the superdataset
+            datalad worktree-sync-mtimes runs
+
             # Sync the worktree in the current directory
             datalad worktree-sync-mtimes
 
@@ -560,10 +563,17 @@ try:
             ui.message(f"{synced} datasets synced")
 
         _params_ = dict(
-            worktree_path=Parameter(
-                args=("worktree_path",),
+            target=Parameter(
+                args=("target",),
                 nargs="?",
-                doc="Worktree to sync (default: current directory)",
+                doc="""Worktree path or branch name (default: current
+                directory)""",
+                constraints=EnsureStr() | EnsureNone(),
+            ),
+            dataset=Parameter(
+                args=("-d", "--dataset"),
+                doc="""Dataset to resolve a branch name against (default:
+                current directory)""",
                 constraints=EnsureStr() | EnsureNone(),
             ),
             reference=Parameter(
@@ -577,11 +587,17 @@ try:
 
         @staticmethod
         @eval_results
-        def __call__(worktree_path=None, reference=None):
+        def __call__(target=None, dataset=None, reference=None):
             from datalad_worktree.core import SKIPPED_RESULTS, WorktreeResult
-            from datalad_worktree.mtimes import sync_nested_mtimes
+            from datalad_worktree.mtimes import (
+                resolve_worktree_target,
+                sync_nested_mtimes,
+            )
 
-            root = Path(worktree_path).resolve() if worktree_path else Path.cwd()
+            root = resolve_worktree_target(
+                target=target,
+                dataset=Path(dataset) if dataset else None,
+            )
 
             for report in sync_nested_mtimes(
                 worktree_path=root,

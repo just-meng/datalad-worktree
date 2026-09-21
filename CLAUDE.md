@@ -51,7 +51,7 @@ uv run --dev pytest
 - **`add`**: Creates worktrees for superdataset + all installed subdatasets. Runs pre-flight check first — if any would fail, none are created.
 - **`list`**: Shows all worktrees across the hierarchy (only datasets with extra worktrees beyond main). Also the default when no subcommand is given.
 - **`delete`**: Deletes worktrees by path or branch name. Processes deepest-first. Optional `--delete-branch`.
-- **`sync-mtimes`**: Re-copies file mtimes into an existing worktree hierarchy from the working trees it was created from. Same machinery `add` runs at creation; exists because `datalad get`, a merge, or a `git checkout` all restore files with fresh mtimes.
+- **`sync-mtimes`**: Re-copies file mtimes into an existing worktree hierarchy from the working trees it was created from. Same machinery `add` runs at creation; exists because `datalad get`, a merge, or a `git checkout` all restore files with fresh mtimes. Takes a worktree path **or** a branch name (`resolve_worktree_target()`), the same target shape `delete` accepts.
 
 ### Call Flow (add)
 

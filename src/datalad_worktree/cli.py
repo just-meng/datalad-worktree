@@ -5,7 +5,7 @@ Can be invoked as:
   - ``worktree add <branch> <worktree-path>``
   - ``worktree`` or ``worktree list``
   - ``worktree delete <path-or-branch>``
-  - ``worktree sync-mtimes [path]``
+  - ``worktree sync-mtimes [path-or-branch]``
   - ``python -m datalad_worktree ...``
 """
 
@@ -152,13 +152,18 @@ def build_parser():
         "sync-mtimes",
         help="copy file mtimes from the main working trees into a worktree",
     )
+    # Target is a path or a branch name, resolved the same way delete does.
     sync_p.add_argument(
-        "worktree_path", type=Path, nargs="?", default=None,
-        help="worktree to sync (default: current directory)",
+        "target", nargs="?", default=None,
+        help="worktree path or branch name (default: current directory)",
     )
     sync_p.add_argument(
         "--from", dest="reference", type=Path, default=None,
         help="reference working tree (default: the one this worktree came from)",
+    )
+    sync_p.add_argument(
+        "-d", "--dataset", type=Path, default=None,
+        help="path to the superdataset root (default: current directory)",
     )
 
     # ── delete ───────────────────────────────────────────────────────────
@@ -251,12 +256,14 @@ def _cmd_add(args) -> int:
 
 
 def _cmd_sync_mtimes(args) -> int:
-    from datalad_worktree.mtimes import sync_nested_mtimes
-
-    worktree_path = (args.worktree_path or Path.cwd()).resolve()
+    from datalad_worktree.mtimes import resolve_worktree_target, sync_nested_mtimes
 
     reports: list[WorktreeReport] = []
     try:
+        worktree_path = resolve_worktree_target(
+            target=args.target,
+            dataset=args.dataset,
+        )
         for report in sync_nested_mtimes(
             worktree_path=worktree_path,
             reference=args.reference,

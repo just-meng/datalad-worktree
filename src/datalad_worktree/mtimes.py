@@ -42,7 +42,9 @@ from pathlib import Path, PurePosixPath
 from datalad_worktree.core import (
     WorktreeReport,
     WorktreeResult,
+    git_branch_checked_out_at,
     git_current_branch,
+    git_worktree_prune,
     validate_superds,
 )
 from datalad_worktree.discovery import discover_subdatasets, is_git_repo_root
@@ -258,6 +260,51 @@ def main_working_tree(worktree_path: Path) -> Path | None:
 
     candidate = common.parent
     return candidate if is_git_repo_root(candidate) else None
+
+
+def resolve_worktree_target(
+    target: str | None = None,
+    dataset: Path | None = None,
+) -> Path:
+    """
+    Resolve a worktree path *or* a branch name to a worktree root.
+
+    Mirrors how ``worktree delete`` reads its target: an existing path is
+    taken as one, anything else is looked up as a branch. The branch lookup
+    runs against ``dataset`` (default: the current directory) and works
+    from inside another worktree too, since ``git worktree list`` reports
+    every worktree of the repository.
+
+    Only the worktree is resolved here, never the reference to copy from.
+    Looking a branch up from a *sibling* worktree would otherwise make that
+    sibling the reference, when what is wanted is always the main working
+    tree -- which ``sync_nested_mtimes`` detects from the target itself.
+
+    Raises
+    ------
+    ValueError
+        If no worktree can be found for ``target``.
+    """
+    if target is None:
+        return Path.cwd()
+
+    if Path(target).exists():
+        return Path(target).resolve()
+
+    # Not a path, so read it as a branch name.
+    dataset_root = validate_superds(dataset or Path.cwd())
+    # A directory removed with `rm -rf` lingers in git's administrative
+    # data; drop it before trusting the lookup.
+    git_worktree_prune(dataset_root)
+
+    worktree_root = git_branch_checked_out_at(dataset_root, target)
+    if worktree_root is None:
+        raise ValueError(
+            f"no worktree on branch '{target}' in {dataset_root}, "
+            f"and no such path"
+        )
+
+    return worktree_root.resolve()
 
 
 def sync_nested_mtimes(

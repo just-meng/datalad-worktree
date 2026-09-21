@@ -75,8 +75,9 @@ worktree list
 worktree
 
 # Restore file mtimes in an existing worktree (after a get, merge, or checkout)
-worktree sync-mtimes
-worktree sync-mtimes --from /data/my-superdataset /tmp/wt
+worktree sync-mtimes my-feature          # by branch name
+worktree sync-mtimes /tmp/wt             # by path
+worktree sync-mtimes                     # the worktree you are standing in
 
 # Delete worktrees (prompts for confirmation)
 worktree delete my-feature
@@ -123,13 +124,14 @@ Also the default when no subcommand is given (`worktree` alone).
 ### `worktree sync-mtimes`
 
 ```
-worktree sync-mtimes [-h] [--from REFERENCE] [worktree_path]
+worktree sync-mtimes [-h] [--from REFERENCE] [-d DATASET] [target]
 
   --from REFERENCE          Working tree to copy from (default: the one this
                             worktree was created from)
+  -d, --dataset DATASET     Dataset to resolve a branch name against
 ```
 
-`worktree_path` defaults to the current directory.
+`target` is a worktree path **or** a branch name, resolved the same way `worktree delete` resolves its target. It defaults to the current directory.
 
 ### `worktree delete`
 
@@ -180,7 +182,7 @@ Two properties keep it safe:
 
 Reconstructing mtimes from commit dates (the `git-restore-mtime` approach) is deliberately not used — routine history rewriting (`jj squash`, rebase) would make every file look new.
 
-Pass `--no-mtimes` to skip the step. To put mtimes back after something rewrites files in an existing worktree — a `datalad get`, a merge, a `git checkout` — run `worktree sync-mtimes`.
+Pass `--no-mtimes` to skip the step. To put mtimes back after something rewrites files in an existing worktree — a `datalad get`, a merge, a `git checkout` — run `worktree sync-mtimes <branch>` from the superdataset, or `worktree sync-mtimes` from inside the worktree itself.
 
 To check the effect on a Snakemake pipeline, diff the dry runs:
 
