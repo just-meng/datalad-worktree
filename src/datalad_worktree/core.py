@@ -103,6 +103,16 @@ def git_branch_exists(repo_path: Path, branch: str) -> bool:
     return result.returncode == 0
 
 
+def git_current_branch(repo_path: Path) -> str:
+    """The branch checked out in ``repo_path``, or "" if detached."""
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "symbolic-ref", "--short", "-q", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 @dataclass
 class GitWorktreeEntry:
     """A single entry from `git worktree list --porcelain`."""

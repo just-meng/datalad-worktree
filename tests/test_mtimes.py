@@ -15,7 +15,9 @@ from datalad_worktree.core import WorktreeResult
 from datalad_worktree.mtimes import (
     copy_mtimes,
     dirty_paths,
+    main_working_tree,
     parent_dirs,
+    sync_nested_mtimes,
     tracked_blobs,
     transferable_paths,
 )
@@ -277,3 +279,112 @@ class TestCopyMtimes:
 
         assert "out.txt" in paths
         assert "code" not in paths
+
+
+class TestSyncNestedMtimes:
+    def test_restores_mtimes_after_a_checkout(self, pipeline_ds: dict):
+        """The case the subcommand exists for: files rewritten after creation."""
+        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
+
+        # Something rewrites the files -- datalad get, a merge, a checkout.
+        for rel in ("out.txt", "results/table.csv", "code/script.py"):
+            _set_mtime(worktree / rel, 1_700_000_000_000_000_000)
+
+        list(sync_nested_mtimes(worktree_path=worktree))
+
+        assert os.lstat(worktree / "out.txt").st_mtime_ns == OUTPUT_MTIME_NS
+        assert os.lstat(worktree / "code" / "script.py").st_mtime_ns == \
+            SCRIPT_MTIME_NS
+
+    def test_covers_superdataset_and_subdatasets(self, pipeline_ds: dict):
+        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
+
+        reports = list(sync_nested_mtimes(worktree_path=worktree))
+        synced = [r for r in reports if r.result == WorktreeResult.MTIMES_SYNCED]
+
+        assert sorted(r.dataset_path for r in synced) == [".", "code"]
+
+    def test_reference_is_auto_detected(self, pipeline_ds: dict):
+        """The super worktree knows the working tree it was created from."""
+        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
+
+        assert main_working_tree(worktree) == pipeline_ds["super"].resolve()
+
+    def test_explicit_reference_is_used(self, pipeline_ds: dict):
+        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
+        _set_mtime(worktree / "out.txt", 1_700_000_000_000_000_000)
+
+        list(sync_nested_mtimes(
+            worktree_path=worktree,
+            reference=pipeline_ds["super"],
+        ))
+
+        assert os.lstat(worktree / "out.txt").st_mtime_ns == OUTPUT_MTIME_NS
+
+    def test_rejects_a_non_worktree(self, pipeline_ds: dict):
+        """A dataset that is its own reference has nothing to copy."""
+        with pytest.raises(ValueError, match="its own reference"):
+            list(sync_nested_mtimes(worktree_path=pipeline_ds["super"]))
+
+    def test_rejects_a_non_repo(self, tmp_path: Path):
+        with pytest.raises(ValueError, match="Not a git repository"):
+            list(sync_nested_mtimes(worktree_path=tmp_path))
+
+    def test_skips_a_missing_reference_subdataset(self, pipeline_ds: dict):
+        """A reference without the subdataset installed is reported, not fatal."""
+        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
+        bare_reference = pipeline_ds["wt_location"] / "reference-only"
+        _git(pipeline_ds["super"], "worktree", "add", "-q",
+             "-b", "reference-only", str(bare_reference))
+
+        reports = list(sync_nested_mtimes(
+            worktree_path=worktree,
+            reference=bare_reference,
+        ))
+        skipped = [r for r in reports if r.dataset_path == "code"]
+
+        assert skipped
+        assert skipped[0].result in (
+            WorktreeResult.SKIPPED_NOT_GIT_REPO,
+            WorktreeResult.SKIPPED_NOT_INSTALLED,
+        )
+
+
+class TestSyncMtimesCLI:
+    def test_parser_accepts_optional_path(self):
+        from datalad_worktree.cli import build_parser
+
+        args = build_parser().parse_args(["sync-mtimes"])
+        assert args.command == "sync-mtimes"
+        assert args.worktree_path is None
+        assert args.reference is None
+
+    def test_parser_accepts_from(self):
+        from datalad_worktree.cli import build_parser
+
+        args = build_parser().parse_args(
+            ["sync-mtimes", "--from", "/data/super", "/tmp/wt"]
+        )
+        assert str(args.reference) == "/data/super"
+        assert str(args.worktree_path) == "/tmp/wt"
+
+    def test_main_syncs(self, pipeline_ds: dict, capsys):
+        from datalad_worktree.cli import main
+
+        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
+        _set_mtime(worktree / "out.txt", 1_700_000_000_000_000_000)
+
+        exit_code = main(["--no-color", "sync-mtimes", str(worktree)])
+        out = capsys.readouterr().out
+
+        assert exit_code == 0
+        assert "mtimes" in out
+        assert os.lstat(worktree / "out.txt").st_mtime_ns == OUTPUT_MTIME_NS
+
+    def test_main_reports_error_for_non_repo(self, tmp_path: Path, capsys):
+        from datalad_worktree.cli import main
+
+        exit_code = main(["--no-color", "sync-mtimes", str(tmp_path)])
+
+        assert exit_code == 1
+        assert "Not a git repository" in capsys.readouterr().err

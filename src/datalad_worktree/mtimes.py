@@ -39,7 +39,13 @@ import subprocess
 from collections.abc import Iterable, Iterator
 from pathlib import Path, PurePosixPath
 
-from datalad_worktree.core import WorktreeReport, WorktreeResult
+from datalad_worktree.core import (
+    WorktreeReport,
+    WorktreeResult,
+    git_current_branch,
+    validate_superds,
+)
+from datalad_worktree.discovery import discover_subdatasets, is_git_repo_root
 
 logger = logging.getLogger(__name__)
 
@@ -228,3 +234,111 @@ def sync_dataset(
         WorktreeResult.MTIMES_SYNCED,
         f"{files} files, {dirs} dirs from {source}",
     )
+
+
+def main_working_tree(worktree_path: Path) -> Path | None:
+    """
+    The working tree a *superdataset* worktree was created from.
+
+    Only sound for the superdataset. For a subdataset whose ``.git`` is a
+    gitlink into ``<super>/.git/modules/<name>``, git reports that git
+    directory as the repository's main worktree -- it is not a working tree
+    at all, and its parent is not the subdataset. Subdatasets are therefore
+    mapped by relative path against the resolved superdataset instead.
+    """
+    result = _git(worktree_path, "rev-parse", "--git-common-dir")
+    if result.returncode != 0:
+        return None
+
+    common = Path(result.stdout.strip())
+    if not common.is_absolute():
+        common = (worktree_path / common).resolve()
+    if common.name != ".git":
+        return None
+
+    candidate = common.parent
+    return candidate if is_git_repo_root(candidate) else None
+
+
+def sync_nested_mtimes(
+    worktree_path: Path,
+    reference: Path | None = None,
+) -> Iterator[WorktreeReport]:
+    """
+    Copy mtimes into an existing worktree hierarchy.
+
+    ``worktree add`` does this once at creation; anything that rewrites
+    files afterwards -- ``datalad get``, a merge, a ``git checkout`` -- gives
+    them fresh mtimes again, and this puts them back.
+
+    Parameters
+    ----------
+    worktree_path : Path
+        Root of the superdataset worktree to sync.
+    reference : Path, optional
+        Working tree to copy from. Defaults to the main working tree that
+        ``worktree_path`` was created from.
+
+    Raises
+    ------
+    ValueError
+        If either side is not a git repository root, or the reference
+        cannot be determined.
+    """
+    worktree_root = validate_superds(worktree_path)
+
+    if reference is None:
+        resolved = main_working_tree(worktree_root)
+        if resolved is None:
+            raise ValueError(
+                f"Could not determine what {worktree_root} was created from; "
+                f"pass --from to name the reference working tree"
+            )
+        reference = resolved
+    reference_root = validate_superds(reference)
+
+    if reference_root == worktree_root:
+        raise ValueError(
+            f"{worktree_root} is its own reference; nothing to copy"
+        )
+
+    branch = git_current_branch(worktree_root)
+
+    yield from sync_dataset(
+        dataset_path=".",
+        source=reference_root,
+        worktree_path=worktree_root,
+        branch=branch,
+    )
+
+    for subds in discover_subdatasets(worktree_root):
+        destination = worktree_root / subds.rel_path
+        source = reference_root / subds.rel_path
+        skipped = WorktreeReport(
+            dataset_path=subds.rel_path,
+            source=source,
+            destination=destination,
+            result=WorktreeResult.SKIPPED_NOT_INSTALLED,
+            branch=branch,
+            message="not installed",
+        )
+
+        if not subds.installed or not is_git_repo_root(destination):
+            yield skipped
+            continue
+
+        # A reference that lacks this subdataset leaves an empty mount
+        # point, from which git reports the *superdataset* -- hence the
+        # root check, not is_git_repo.
+        if not is_git_repo_root(source):
+            skipped.result = WorktreeResult.SKIPPED_NOT_GIT_REPO
+            skipped.message = f"no reference dataset at {source}"
+            yield skipped
+            continue
+
+        yield from sync_dataset(
+            dataset_path=subds.rel_path,
+            source=source,
+            worktree_path=destination,
+            branch=branch,
+        )

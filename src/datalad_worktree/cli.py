@@ -5,6 +5,7 @@ Can be invoked as:
   - ``worktree add <branch> <worktree-path>``
   - ``worktree`` or ``worktree list``
   - ``worktree delete <path-or-branch>``
+  - ``worktree sync-mtimes [path]``
   - ``python -m datalad_worktree ...``
 """
 
@@ -146,6 +147,20 @@ def build_parser():
         help="path to the superdataset root (default: current directory)",
     )
 
+    # ── sync-mtimes ──────────────────────────────────────────────────────
+    sync_p = sub.add_parser(
+        "sync-mtimes",
+        help="copy file mtimes from the main working trees into a worktree",
+    )
+    sync_p.add_argument(
+        "worktree_path", type=Path, nargs="?", default=None,
+        help="worktree to sync (default: current directory)",
+    )
+    sync_p.add_argument(
+        "--from", dest="reference", type=Path, default=None,
+        help="reference working tree (default: the one this worktree came from)",
+    )
+
     # ── delete ───────────────────────────────────────────────────────────
     del_p = sub.add_parser(
         "delete",
@@ -233,6 +248,29 @@ def _cmd_add(args) -> int:
         print(f"\n{', '.join(parts)} at {worktree_path}")
 
     return 1 if has_failures else 0
+
+
+def _cmd_sync_mtimes(args) -> int:
+    from datalad_worktree.mtimes import sync_nested_mtimes
+
+    worktree_path = (args.worktree_path or Path.cwd()).resolve()
+
+    reports: list[WorktreeReport] = []
+    try:
+        for report in sync_nested_mtimes(
+            worktree_path=worktree_path,
+            reference=args.reference,
+        ):
+            _render_report(report)
+            reports.append(report)
+    except ValueError as e:
+        print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
+        return 1
+
+    synced = sum(1 for r in reports if r.result == WorktreeResult.MTIMES_SYNCED)
+    print(f"\n{synced} datasets synced at {worktree_path}")
+
+    return 1 if any(r.result == WorktreeResult.FAILED for r in reports) else 0
 
 
 def _cmd_list(args) -> int:
@@ -384,6 +422,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_list(args)
     elif args.command == "delete":
         return _cmd_delete(args)
+    elif args.command == "sync-mtimes":
+        return _cmd_sync_mtimes(args)
 
     parser.print_help()
     return 1

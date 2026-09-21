@@ -8,6 +8,7 @@ from pathlib import Path
 from datalad_worktree.discovery import (
     discover_subdatasets,
     is_git_repo,
+    is_git_repo_root,
 )
 
 
@@ -62,3 +63,28 @@ class TestDiscoverSubdatasets:
         subs = discover_subdatasets(superds["super"])
         by_path = {s.rel_path: s for s in subs}
         assert by_path["sub-02"].installed is False
+
+
+class TestIsGitRepoRoot:
+    def test_true_at_the_root(self, datalad_ds: Path):
+        assert is_git_repo_root(datalad_ds)
+
+    def test_false_inside_a_repo(self, datalad_ds: Path):
+        """
+        The distinction from is_git_repo, which git answers by walking up.
+
+        An uninstalled subdataset is an empty mount point; asking
+        is_git_repo there reports the enclosing superdataset, which would
+        silently resolve one dataset against another.
+        """
+        inside = datalad_ds / "subdir"
+        inside.mkdir()
+
+        assert is_git_repo(inside)          # git walked up to datalad_ds
+        assert not is_git_repo_root(inside)
+
+    def test_false_for_missing_path(self, tmp_path: Path):
+        assert not is_git_repo_root(tmp_path / "nope")
+
+    def test_false_outside_any_repo(self, tmp_path: Path):
+        assert not is_git_repo_root(tmp_path)
