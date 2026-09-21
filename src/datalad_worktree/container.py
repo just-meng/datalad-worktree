@@ -241,7 +241,7 @@ def configure_dataset(
 
         yield report(
             WorktreeResult.CONFIGURED,
-            f"{name}: bound {main_superds} read-only",
+            f"{name}: bind {main_superds}",
         )
 
     committed, error = _commit_fallback(worktree_path)

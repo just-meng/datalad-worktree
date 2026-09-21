@@ -58,18 +58,18 @@ try:
 
             if res.get("container_config"):
                 ui.message("{} {} ({})".format(
-                    ac.color_word("config", ac.GREEN),
+                    ac.color_word("config", ac.CYAN),
                     label, res.get("message", ""),
                 ))
             elif res.get("mtimes"):
                 ui.message("{} {} ({})".format(
-                    ac.color_word("mtimes", ac.GREEN),
+                    ac.color_word("mtimes", ac.CYAN),
                     label, res.get("message", ""),
                 ))
             elif status == "ok":
                 extra = ""
                 if res.get("new_branch"):
-                    extra = ac.color_word(" (new branch)", ac.YELLOW)
+                    extra = " (new branch)"
                 ui.message("{} {} -> {}{}".format(
                     ac.color_word("create", ac.GREEN),
                     label, dest, extra,
@@ -539,7 +539,7 @@ try:
             label = res.get("dataset_path", "") or "."
             if res.get("status") == "ok":
                 ui.message("{} {} ({})".format(
-                    ac.color_word("mtimes", ac.GREEN),
+                    ac.color_word("mtimes", ac.CYAN),
                     label, res.get("message", ""),
                 ))
             elif res.get("status") == "notneeded":

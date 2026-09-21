@@ -20,15 +20,20 @@ from datalad_worktree.core import WorktreeReport, WorktreeResult
 
 
 class _Colors:
+    # Green for what changed the worktree tree itself (create, delete),
+    # cyan for the bookkeeping steps that follow (config, mtimes), yellow
+    # for skips. None of them are bold: "1;" is the bold attribute, and
+    # emphasising a skip over a creation gets the hierarchy backwards.
     RED = "\033[0;31m"
     GREEN = "\033[0;32m"
-    YELLOW = "\033[1;33m"
+    YELLOW = "\033[0;33m"
+    CYAN = "\033[0;36m"
     DIM = "\033[2m"
     NC = "\033[0m"
 
     @classmethod
     def disable(cls):
-        cls.RED = cls.GREEN = cls.YELLOW = cls.DIM = cls.NC = ""
+        cls.RED = cls.GREEN = cls.YELLOW = cls.CYAN = cls.DIM = cls.NC = ""
 
 
 C = _Colors
@@ -56,7 +61,7 @@ def _render_report(report: WorktreeReport) -> None:
     elif report.result == WorktreeResult.CREATED_NEW_BRANCH:
         if is_tty:
             print("\033[2K", end="")
-        print(f"{C.GREEN}create{C.NC} {label} -> {dest} {C.YELLOW}(new branch){C.NC}")
+        print(f"{C.GREEN}create{C.NC} {label} -> {dest} {C.DIM}(new branch){C.NC}")
     elif report.result == WorktreeResult.SKIPPED_DRY_RUN:
         print(f"{C.GREEN}create{C.NC} {C.DIM}[DRY-RUN]{C.NC} {label} -> {dest}")
     elif report.result in (
@@ -67,9 +72,9 @@ def _render_report(report: WorktreeReport) -> None:
     ):
         print(f"{C.YELLOW}skip{C.NC}   {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.CONFIGURED:
-        print(f"{C.GREEN}config{C.NC} {label} {C.DIM}({report.message}){C.NC}")
+        print(f"{C.CYAN}config{C.NC} {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.MTIMES_SYNCED:
-        print(f"{C.GREEN}mtimes{C.NC} {label} {C.DIM}({report.message}){C.NC}")
+        print(f"{C.CYAN}mtimes{C.NC} {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.DELETED:
         print(f"{C.GREEN}delete{C.NC} {label} -> {dest}")
     elif report.result == WorktreeResult.DELETED_BRANCH:
