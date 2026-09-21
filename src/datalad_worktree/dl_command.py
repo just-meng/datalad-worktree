@@ -38,10 +38,10 @@ try:
         Examples::
 
             # Create worktrees under /tmp/wt on branch 'feature/x'
-            datalad worktree-add /tmp/wt feature/x
+            datalad worktree-add feature/x /tmp/wt
 
             # Dry run
-            datalad worktree-add --dry-run /tmp/wt dev/experiment
+            datalad worktree-add --dry-run dev/experiment /tmp/wt
         """
 
         @staticmethod
@@ -120,14 +120,14 @@ try:
                 ui.message(f"{', '.join(parts)} at {worktree_root}")
 
         _params_ = dict(
-            worktree_path=Parameter(
-                args=("worktree_path",),
-                doc="Full path for the superdataset worktree",
-                constraints=EnsureStr(),
-            ),
             branch=Parameter(
                 args=("branch",),
                 doc="Branch name to create/checkout in every worktree",
+                constraints=EnsureStr(),
+            ),
+            worktree_path=Parameter(
+                args=("worktree_path",),
+                doc="Full path for the superdataset worktree",
                 constraints=EnsureStr(),
             ),
             dataset=Parameter(
@@ -165,8 +165,8 @@ try:
         @staticmethod
         @eval_results
         def __call__(
-            worktree_path,
             branch,
+            worktree_path,
             dataset=None,
             no_create_branch=False,
             force=False,

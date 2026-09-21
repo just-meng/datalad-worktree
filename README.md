@@ -35,7 +35,7 @@ uv run --project ~/path/to/datalad-worktree datalad worktree-list
 cd /data/my-superdataset
 
 # Create nested worktrees
-worktree add /tmp/worktrees/my-feature my-feature
+worktree add my-feature /tmp/worktrees/my-feature
 
 # List all worktrees across the hierarchy (also the default with no subcommand)
 worktree list
@@ -65,10 +65,10 @@ All commands are run from the superdataset root (or pass `-d <path>` to specify 
 
 ```bash
 # Create worktrees
-worktree add <worktree-path> <branch>
-worktree add --dry-run /tmp/wt experiment
-worktree add --force /tmp/wt my-feature
-worktree add --no-create-branch /tmp/wt v1.0
+worktree add <branch> <worktree-path>
+worktree add --dry-run experiment /tmp/wt
+worktree add --force my-feature /tmp/wt
+worktree add --no-create-branch v1.0 /tmp/wt
 
 # List worktrees (grouped by branch); also the default with no subcommand
 worktree list
@@ -87,7 +87,7 @@ worktree delete --force --delete-branch my-feature
 If DataLad is installed, the tool registers as a DataLad extension:
 
 ```bash
-datalad worktree-add /tmp/wt my-feature
+datalad worktree-add my-feature /tmp/wt
 datalad worktree-list
 datalad worktree-delete my-feature
 ```
@@ -98,7 +98,7 @@ datalad worktree-delete my-feature
 
 ```
 worktree add [-h] [-n] [-f] [--no-create-branch] [--no-bindpaths] [-d DATASET]
-             worktree_path branch
+             branch worktree_path
 
   -n, --dry-run             Show what would be done without doing it
   -f, --force               Pass --force to git worktree add

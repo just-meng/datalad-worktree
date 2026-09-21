@@ -34,9 +34,9 @@ datalad-worktree/
 uv tool install -e .
 
 # Run (three equivalent entry points)
-worktree add /tmp/wt branch
-datalad worktree-add /tmp/wt branch   # requires datalad
-python -m datalad_worktree add /tmp/wt branch
+worktree add branch /tmp/wt
+datalad worktree-add branch /tmp/wt   # requires datalad
+python -m datalad_worktree add branch /tmp/wt
 
 # Run tests
 uv run --dev pytest

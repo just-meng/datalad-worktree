@@ -2,7 +2,7 @@
 Command-line interface for datalad-worktree.
 
 Can be invoked as:
-  - ``worktree add <worktree-path> <branch>``
+  - ``worktree add <branch> <worktree-path>``
   - ``worktree`` or ``worktree list``
   - ``worktree delete <path-or-branch>``
   - ``python -m datalad_worktree ...``
@@ -102,12 +102,12 @@ def build_parser():
         help="create nested worktrees for all datasets",
     )
     add_p.add_argument(
-        "worktree_path", type=Path,
-        help="path for the superdataset worktree",
-    )
-    add_p.add_argument(
         "branch",
         help="branch name to create/checkout in every worktree",
+    )
+    add_p.add_argument(
+        "worktree_path", type=Path,
+        help="path for the superdataset worktree",
     )
     add_p.add_argument(
         "-n", "--dry-run", action="store_true", default=False,
