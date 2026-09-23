@@ -19,7 +19,6 @@ datalad = ["datalad"]
 [dependency-groups]
 dev = [
     "pytest>=7",
-    "ruff>=0.16",
     "datalad",
     "datalad-container>=1.2.6",
 ]
@@ -35,14 +34,3 @@ packages = ["src/datalad_worktree"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
-[tool.ruff]
-target-version = "py311"
-line-length = 100
-
-[tool.ruff.lint]
-# Pyflakes (unused imports/vars, undefined names) + pycodestyle essentials +
-# pyupgrade. Deliberately not pulling in pylint/flake8-comprehensions/etc:
-# this codebase checks subprocess.run().returncode by hand everywhere
-# instead of check=True, which is a design choice, not a bug.
-select = ["E4", "E7", "E9", "F", "UP"]

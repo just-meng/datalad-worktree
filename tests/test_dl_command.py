@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 try:
+    from datalad.distribution.dataset import Dataset
     from datalad.interface.base import Interface
 
     from datalad_worktree.dl_command import WorktreeAdd, WorktreeDelete, WorktreeList

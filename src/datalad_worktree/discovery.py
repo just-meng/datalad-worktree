@@ -9,6 +9,7 @@ import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class SubDataset:
     depth: int = 0
 
     @property
-    def git_dir(self) -> Path | None:
+    def git_dir(self) -> Optional[Path]:
         """Return the .git dir/file path if installed."""
         if not self.installed:
             return None

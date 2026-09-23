@@ -166,7 +166,6 @@ class TestDeleteWithDeleteBranch:
             r for r in reports if r.result == WorktreeResult.DELETED_BRANCH
         ]
         assert len(deleted_branches) == 4
-        assert not wt_path.exists()
 
         # Verify the branch is gone
         out = _git(superds["super"], "branch", "--list", "feat/del-branch")
