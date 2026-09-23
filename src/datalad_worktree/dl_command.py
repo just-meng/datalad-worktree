@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 try:
     import datalad.support.ansi_colors as ac
-    from datalad.interface.base import Interface, build_doc
+    from datalad.interface.base import Interface, build_doc, eval_results
     from datalad.interface.results import get_status_dict
-    from datalad.interface.utils import default_result_renderer, eval_results
+    from datalad.interface.utils import default_result_renderer
     from datalad.support.constraints import EnsureNone, EnsureStr
     from datalad.support.param import Parameter
     from datalad.ui import ui
