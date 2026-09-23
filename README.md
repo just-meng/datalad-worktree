@@ -164,10 +164,6 @@ Shows worktrees grouped by branch. Main worktrees are listed first under the sup
 - git (on PATH)
 - [DataLad](https://www.datalad.org/) (optional; enables `datalad worktree-*` commands)
 
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## License
 
 MIT
