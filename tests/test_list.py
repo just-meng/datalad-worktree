@@ -7,7 +7,13 @@ from pathlib import Path
 
 from datalad_worktree.add import create_nested_worktrees
 from datalad_worktree.core import WorktreeResult
-from datalad_worktree.list_cmd import list_nested_worktrees
+from datalad_worktree.list_cmd import (
+    DETACHED_LABEL,
+    annotation,
+    branch_order,
+    group_by_branch,
+    list_nested_worktrees,
+)
 
 
 def _create_worktrees(superds: dict, name: str, branch: str) -> Path:
@@ -100,3 +106,87 @@ class TestListNestedWorktrees:
             assert len(non_bare) == 1, (
                 f"{ds_wt.dataset_path} still lists a stale worktree: {non_bare}"
             )
+
+
+# ── Grouping (issue #13) ─────────────────────────────────────────────────────
+
+
+class TestAnnotation:
+    def test_agreeing_branch_gets_none(self):
+        assert annotation("runs", "runs") == ""
+
+    def test_differing_branch_is_parenthesised(self):
+        assert annotation("other", "runs") == " (other)"
+
+    def test_detached_is_not_double_parenthesised(self):
+        """It produced ((detached)) before."""
+        assert annotation(DETACHED_LABEL, "runs") == " (detached)"
+
+
+class TestBranchOrder:
+    def test_named_branches_sort_alphabetically(self):
+        assert branch_order({"runs": [], "aaa": [], "zzz": []}) == \
+            ["aaa", "runs", "zzz"]
+
+    def test_detached_sorts_last_not_first(self):
+        order = branch_order({"runs": [], DETACHED_LABEL: [], "aaa": []})
+        assert order[-1] == DETACHED_LABEL
+
+
+class TestGroupByBranch:
+    """
+    A worktree is grouped by the hierarchy it sits in, not by its own branch.
+
+    Reproduces the reported layout: a superdataset worktree on 'runs' whose
+    `code` subdataset is on a detached HEAD. That `code` belongs under 'runs',
+    annotated -- not in a separate '(detached)' section.
+    """
+
+    def _entries(self):
+        main = Path("/ds")
+        runs = Path("/wt/runs")
+        return [
+            (".", main, "master", True),
+            ("code", main / "code", DETACHED_LABEL, True),
+            (".", runs, "runs", False),
+            ("code", runs / "code", DETACHED_LABEL, False),
+            ("inputs/raw", runs / "inputs/raw", "runs", False),
+        ]
+
+    def test_detached_subdataset_joins_its_hierarchy(self):
+        _main, branch_groups, _super = group_by_branch(self._entries())
+
+        assert DETACHED_LABEL not in branch_groups
+        assert sorted(branch_groups) == ["runs"]
+        assert ("code", Path("/wt/runs/code"), DETACHED_LABEL) \
+            in branch_groups["runs"]
+
+    def test_main_group_keeps_the_main_checkout(self):
+        main_group, _groups, super_branch = group_by_branch(self._entries())
+
+        assert super_branch == "master"
+        assert [p for p, _, _ in main_group] == [".", "code"]
+
+    def test_a_worktree_under_no_known_root_keeps_its_own_heading(self):
+        """Hand-made subdataset worktree with no superdataset worktree above it."""
+        entries = [
+            (".", Path("/ds"), "master", True),
+            ("code", Path("/elsewhere/code"), "experiment", False),
+        ]
+
+        _main, branch_groups, _super = group_by_branch(entries)
+
+        assert sorted(branch_groups) == ["experiment"]
+
+    def test_innermost_root_wins_for_nested_worktrees(self):
+        entries = [
+            (".", Path("/ds"), "master", True),
+            (".", Path("/wt/outer"), "outer", False),
+            (".", Path("/wt/outer/inner"), "inner", False),
+            ("code", Path("/wt/outer/inner/code"), DETACHED_LABEL, False),
+        ]
+
+        _main, branch_groups, _super = group_by_branch(entries)
+
+        assert ("code", Path("/wt/outer/inner/code"), DETACHED_LABEL) \
+            in branch_groups["inner"]
