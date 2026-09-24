@@ -39,16 +39,37 @@ def _find_worktree_by_path(
     return None
 
 
+def is_main_worktree(repo_path: Path, worktree_path: Path) -> bool:
+    """
+    Whether ``worktree_path`` is the repository's own checkout.
+
+    ``git worktree list`` reports the main working tree alongside the linked
+    ones, so a branch lookup can land on it -- and deleting it means deleting
+    the dataset. Since every caller resolves against the repository it is
+    operating on, the main working tree is simply ``repo_path`` itself.
+    """
+    try:
+        return worktree_path.resolve() == repo_path.resolve()
+    except OSError:
+        return False
+
+
 def _find_worktree_by_branch(
     repo_path: Path, branch: str,
 ) -> tuple[Path | None, str | None]:
     """
-    Find a non-bare worktree checking out the given branch.
-    Returns (worktree_path, branch) or (None, None).
+    Find a *linked* non-bare worktree checking out the given branch.
+
+    The main working tree is skipped: it is the dataset, not a worktree of it,
+    and `git worktree remove` refuses it -- after which the fallback below
+    would have deleted it outright.
     """
     for entry in git_worktree_list(repo_path):
-        if entry.branch == branch and not entry.bare:
-            return entry.path, entry.branch
+        if entry.branch != branch or entry.bare:
+            continue
+        if is_main_worktree(repo_path, entry.path):
+            continue
+        return entry.path, entry.branch
     return None, None
 
 
@@ -59,6 +80,12 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
     falls back to deleting the directory and pruning.
     Returns error message or empty string.
     """
+    if is_main_worktree(repo_path, worktree_path):
+        # Never reachable through the normal resolution path, which filters
+        # main working trees out -- but this is the guard that makes the
+        # rmtree fallback below safe, so it stays.
+        return f"refusing to delete {worktree_path}: it is the main working tree"
+
     cmd = ["git", "-C", str(repo_path), "worktree", "remove"]
     if force:
         cmd.append("--force")
@@ -68,7 +95,9 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
     if result.returncode == 0:
         return ""
 
-    # Fallback: delete directory manually and prune
+    # Fallback: delete directory manually and prune. Reached when `git
+    # worktree remove` fails on a DataLad repo whose .git is a directory
+    # rather than a gitlink file.
     wt = Path(worktree_path)
     if wt.exists():
         try:
@@ -146,6 +175,17 @@ def resolve_delete_targets(
                 wt_path = worktree_root
             else:
                 wt_path = worktree_root / dataset_path
+
+            if is_main_worktree(repo_path, wt_path):
+                skipped.append(WorktreeReport(
+                    dataset_path=dataset_path,
+                    source=repo_path,
+                    destination=wt_path,
+                    result=WorktreeResult.SKIPPED_NO_WORKTREE,
+                    branch="",
+                    message=f"{wt_path} is the main working tree, not a worktree",
+                ))
+                continue
 
             found = _find_worktree_by_path(repo_path, wt_path)
             if found is None:

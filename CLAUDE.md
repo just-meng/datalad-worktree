@@ -84,6 +84,7 @@ uv run --dev pytest
 - **Branch logic is per-dataset**: If branch exists, checkout. If not, create with `-b`. Evaluated independently.
 - **All git interactions** go through `subprocess.run()` with `capture_output=True, text=True`. No gitpython dependency.
 - **Delete fallback**: `git worktree remove` may fail on DataLad repos where `.git` is a directory instead of a gitlink file. Falls back to `shutil.rmtree` + `git worktree prune`.
+- **The main working tree is never a delete target** (`is_main_worktree()`): `git worktree list` reports it alongside the linked ones, so a branch lookup landed on it, `git worktree remove` refused it, and the `rmtree` fallback then deleted the dataset outright — reported as `DELETED`. Annexed datasets survived by accident, because `rmtree` trips on mode-555 annex object directories; a text2git or no-annex dataset (what `code/` datasets are) was destroyed. Guarded in three places: the branch lookup skips it, path mode reports it as not-a-worktree, and `_git_worktree_remove` refuses it outright — the last being what makes the `rmtree` fallback safe at all.
 
 ### Result Types
 
