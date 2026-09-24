@@ -5,8 +5,7 @@ Can be invoked as:
   - ``worktree add <branch> <worktree-path>``
   - ``worktree`` or ``worktree list``
   - ``worktree delete <path-or-branch>``
-  - ``worktree sync-mtimes [path-or-branch]``
-  - ``worktree fetch <path-or-branch>``
+  - ``worktree fetch [path-or-branch]``
   - ``python -m datalad_worktree ...``
 """
 
@@ -159,34 +158,16 @@ def build_parser():
         help="path to the superdataset root (default: current directory)",
     )
 
-    # ── sync-mtimes ──────────────────────────────────────────────────────
-    sync_p = sub.add_parser(
-        "sync-mtimes",
-        help="copy file mtimes from the main working trees into a worktree",
-    )
-    # Target is a path or a branch name, resolved the same way delete does.
-    sync_p.add_argument(
-        "target", nargs="?", default=None,
-        help="worktree path or branch name (default: current directory)",
-    )
-    sync_p.add_argument(
-        "--from", dest="reference", type=Path, default=None,
-        help="reference working tree (default: the one this worktree came from)",
-    )
-    sync_p.add_argument(
-        "-d", "--dataset", type=Path, default=None,
-        help="path to the superdataset root (default: current directory)",
-    )
-
     # ── fetch ────────────────────────────────────────────────────────────
     fetch_p = sub.add_parser(
         "fetch",
         help="bring a worktree's commits into this checkout, mtimes included",
     )
-    # Same target shape as delete and sync-mtimes: a path or a branch name.
+    # Same target shape as delete: a path or a branch name.
     fetch_p.add_argument(
-        "target",
-        help="worktree path or branch name to ship from",
+        "target", nargs="?", default=None,
+        help="worktree path or branch name to fetch from (default: the "
+             "working tree this worktree was created from)",
     )
     fetch_p.add_argument(
         "-n", "--dry-run", action="store_true", default=False,
@@ -194,7 +175,7 @@ def build_parser():
     )
     fetch_p.add_argument(
         "--no-mtimes", action="store_true", default=False,
-        help="don't refresh mtimes from the worktree afterwards",
+        help="don't refresh mtimes from the source afterwards",
     )
     fetch_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
@@ -290,43 +271,14 @@ def _cmd_add(args) -> int:
     return 1 if has_failures else 0
 
 
-def _cmd_sync_mtimes(args) -> int:
-    from datalad_worktree.mtimes import resolve_worktree_target, sync_nested_mtimes
-
-    reports: list[WorktreeReport] = []
-    try:
-        worktree_path = resolve_worktree_target(
-            target=args.target,
-            dataset=args.dataset,
-        )
-        for report in sync_nested_mtimes(
-            worktree_path=worktree_path,
-            reference=args.reference,
-        ):
-            _render_report(report)
-            reports.append(report)
-    except ValueError as e:
-        print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
-        return 1
-
-    synced = sum(1 for r in reports if r.result == WorktreeResult.MTIMES_SYNCED)
-    print(f"\n{synced} datasets synced at {worktree_path}")
-
-    return 1 if any(r.result == WorktreeResult.FAILED for r in reports) else 0
-
-
 def _cmd_fetch(args) -> int:
-    from datalad_worktree.mtimes import resolve_worktree_target
-    from datalad_worktree.fetch import fetch_nested_worktrees
+    from datalad_worktree.fetch import fetch_nested_worktrees, resolve_fetch_source
 
     main_path = (args.dataset or Path.cwd()).resolve()
 
     reports: list[WorktreeReport] = []
     try:
-        worktree_path = resolve_worktree_target(
-            target=args.target,
-            dataset=args.dataset,
-        )
+        worktree_path = resolve_fetch_source(args.target, main_path)
         for report in fetch_nested_worktrees(
             main_path=main_path,
             worktree_path=worktree_path,
@@ -495,8 +447,6 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_list(args)
     elif args.command == "delete":
         return _cmd_delete(args)
-    elif args.command == "sync-mtimes":
-        return _cmd_sync_mtimes(args)
     elif args.command == "fetch":
         return _cmd_fetch(args)
 

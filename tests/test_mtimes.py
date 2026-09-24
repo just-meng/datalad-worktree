@@ -19,7 +19,6 @@ from datalad_worktree.mtimes import (
     main_working_tree,
     parent_dirs,
     resolve_worktree_target,
-    sync_nested_mtimes,
     tracked_blobs,
     transferable_paths,
     unlocked_annex_paths,
@@ -392,113 +391,21 @@ class TestCopyMtimes:
         assert "code" not in paths
 
 
-class TestSyncNestedMtimes:
-    def test_restores_mtimes_after_a_checkout(self, pipeline_ds: dict):
-        """The case the subcommand exists for: files rewritten after creation."""
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
-
-        # Something rewrites the files -- datalad get, a merge, a checkout.
-        for rel in ("out.txt", "results/table.csv", "code/script.py"):
-            _set_mtime(worktree / rel, 1_700_000_000_000_000_000)
-
-        list(sync_nested_mtimes(worktree_path=worktree))
-
-        assert os.lstat(worktree / "out.txt").st_mtime_ns == OUTPUT_MTIME_NS
-        assert os.lstat(worktree / "code" / "script.py").st_mtime_ns == \
-            SCRIPT_MTIME_NS
-
-    def test_covers_superdataset_and_subdatasets(self, pipeline_ds: dict):
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
-
-        reports = list(sync_nested_mtimes(worktree_path=worktree))
-        synced = [r for r in reports if r.result == WorktreeResult.MTIMES_SYNCED]
-
-        assert sorted(r.dataset_path for r in synced) == [".", "code"]
-
+class TestMainWorkingTree:
     def test_reference_is_auto_detected(self, pipeline_ds: dict):
         """The super worktree knows the working tree it was created from."""
         worktree = _add(pipeline_ds, "wt", "feat/mtimes")
 
         assert main_working_tree(worktree) == pipeline_ds["super"].resolve()
 
-    def test_explicit_reference_is_used(self, pipeline_ds: dict):
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
-        _set_mtime(worktree / "out.txt", 1_700_000_000_000_000_000)
-
-        list(sync_nested_mtimes(
-            worktree_path=worktree,
-            reference=pipeline_ds["super"],
-        ))
-
-        assert os.lstat(worktree / "out.txt").st_mtime_ns == OUTPUT_MTIME_NS
-
-    def test_rejects_a_non_worktree(self, pipeline_ds: dict):
-        """A dataset that is its own reference has nothing to copy."""
-        with pytest.raises(ValueError, match="its own reference"):
-            list(sync_nested_mtimes(worktree_path=pipeline_ds["super"]))
-
-    def test_rejects_a_non_repo(self, tmp_path: Path):
-        with pytest.raises(ValueError, match="Not a git repository"):
-            list(sync_nested_mtimes(worktree_path=tmp_path))
-
-    def test_skips_a_missing_reference_subdataset(self, pipeline_ds: dict):
-        """A reference without the subdataset installed is reported, not fatal."""
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
-        bare_reference = pipeline_ds["wt_location"] / "reference-only"
-        _git(pipeline_ds["super"], "worktree", "add", "-q",
-             "-b", "reference-only", str(bare_reference))
-
-        reports = list(sync_nested_mtimes(
-            worktree_path=worktree,
-            reference=bare_reference,
-        ))
-        skipped = [r for r in reports if r.dataset_path == "code"]
-
-        assert skipped
-        assert skipped[0].result in (
-            WorktreeResult.SKIPPED_NOT_GIT_REPO,
-            WorktreeResult.SKIPPED_NOT_INSTALLED,
-        )
-
-
-class TestSyncMtimesCLI:
-    def test_parser_accepts_optional_target(self):
-        from datalad_worktree.cli import build_parser
-
-        args = build_parser().parse_args(["sync-mtimes"])
-        assert args.command == "sync-mtimes"
-        assert args.target is None
-        assert args.reference is None
-
-    def test_parser_accepts_from(self):
-        from datalad_worktree.cli import build_parser
-
-        args = build_parser().parse_args(
-            ["sync-mtimes", "--from", "/data/super", "/tmp/wt"]
-        )
-        assert str(args.reference) == "/data/super"
-        assert args.target == "/tmp/wt"
-
-    def test_main_syncs(self, pipeline_ds: dict, capsys):
-        from datalad_worktree.cli import main
-
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
-        _set_mtime(worktree / "out.txt", 1_700_000_000_000_000_000)
-
-        exit_code = main(["--no-color", "sync-mtimes", str(worktree)])
-        out = capsys.readouterr().out
-
-        assert exit_code == 0
-        assert "mtimes" in out
-        assert os.lstat(worktree / "out.txt").st_mtime_ns == OUTPUT_MTIME_NS
-
-    def test_main_reports_error_for_non_repo(self, tmp_path: Path, capsys):
-        from datalad_worktree.cli import main
-
-        exit_code = main(["--no-color", "sync-mtimes", str(tmp_path)])
-
-        assert exit_code == 1
-        assert "Not a git repository" in capsys.readouterr().err
+    def test_a_main_checkout_resolves_to_itself(self, pipeline_ds: dict):
+        """
+        Not None: --git-common-dir in a main checkout is its own .git, so the
+        answer is the checkout itself. Useless as a source, which is why
+        resolve_fetch_source rejects it rather than trusting this to be None.
+        """
+        assert main_working_tree(pipeline_ds["super"]) == \
+            pipeline_ds["super"].resolve()
 
 
 class TestResolveWorktreeTarget:
@@ -520,16 +427,6 @@ class TestResolveWorktreeTarget:
         with pytest.raises(ValueError, match="no worktree on branch 'nope'"):
             resolve_worktree_target(target="nope", dataset=pipeline_ds["super"])
 
-    def test_branch_of_the_dataset_itself_is_rejected(self, pipeline_ds: dict):
-        """The main checkout is its own reference; there is nothing to copy."""
-        branch = _git(
-            pipeline_ds["super"], "symbolic-ref", "--short", "HEAD"
-        ).stdout.strip()
-        root = resolve_worktree_target(target=branch, dataset=pipeline_ds["super"])
-
-        with pytest.raises(ValueError, match="its own reference"):
-            list(sync_nested_mtimes(worktree_path=root))
-
     def test_resolves_a_sibling_from_inside_a_worktree(self, pipeline_ds: dict):
         """git worktree list reports siblings, so worktree->worktree works."""
         first = _add(pipeline_ds, "wt-a", "runs")
@@ -538,18 +435,6 @@ class TestResolveWorktreeTarget:
         assert resolve_worktree_target(target="other", dataset=first) == \
             second.resolve()
 
-    def test_sibling_lookup_still_copies_from_the_main_tree(self, pipeline_ds: dict):
-        """Not from the sibling that happened to answer the lookup."""
-        first = _add(pipeline_ds, "wt-a", "runs")
-        second = _add(pipeline_ds, "wt-b", "other")
-        _set_mtime(second / "out.txt", 1_700_000_000_000_000_000)
-        _set_mtime(first / "out.txt", 1_600_000_000_000_000_000)
-
-        root = resolve_worktree_target(target="other", dataset=first)
-        list(sync_nested_mtimes(worktree_path=root))
-
-        assert os.lstat(second / "out.txt").st_mtime_ns == OUTPUT_MTIME_NS
-
     def test_stale_worktree_is_pruned_before_lookup(self, pipeline_ds: dict):
         """A directory removed with rm -rf must not resolve."""
         worktree = _add(pipeline_ds, "wt", "runs")
@@ -557,32 +442,3 @@ class TestResolveWorktreeTarget:
 
         with pytest.raises(ValueError, match="no worktree on branch 'runs'"):
             resolve_worktree_target(target="runs", dataset=pipeline_ds["super"])
-
-
-class TestSyncMtimesByBranch:
-    def test_cli_accepts_a_branch_name(self, pipeline_ds: dict, capsys):
-        """`worktree sync-mtimes runs`, run from the superdataset."""
-        from datalad_worktree.cli import main
-
-        worktree = _add(pipeline_ds, "wt", "runs")
-        _set_mtime(worktree / "out.txt", 1_700_000_000_000_000_000)
-
-        exit_code = main([
-            "--no-color", "sync-mtimes", "runs",
-            "-d", str(pipeline_ds["super"]),
-        ])
-
-        assert exit_code == 0
-        assert "mtimes" in capsys.readouterr().out
-        assert os.lstat(worktree / "out.txt").st_mtime_ns == OUTPUT_MTIME_NS
-
-    def test_cli_unknown_branch_exits_1(self, pipeline_ds: dict, capsys):
-        from datalad_worktree.cli import main
-
-        exit_code = main([
-            "--no-color", "sync-mtimes", "nope",
-            "-d", str(pipeline_ds["super"]),
-        ])
-
-        assert exit_code == 1
-        assert "no worktree on branch 'nope'" in capsys.readouterr().err

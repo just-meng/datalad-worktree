@@ -12,10 +12,11 @@ from datalad.api import create, install
 from datalad.distribution.dataset import Dataset
 
 from datalad_worktree.add import create_nested_worktrees
-from datalad_worktree.cli import build_parser, main
+from datalad_worktree.cli import build_parser, main as main_cli
 from datalad_worktree.core import WorktreeResult
 from datalad_worktree.fetch import (
     MERGE_COMMIT_PREFIX,
+    resolve_fetch_source,
     collisions,
     dataset_pairs,
     fast_forward_state,
@@ -238,7 +239,7 @@ class TestCollisions:
 # ── The behaviour the command exists for ─────────────────────────────────────
 
 
-class TestUpdateShipsContent:
+class TestFetchShipsContent:
     def test_changed_output_arrives(self, shipping_ds: dict):
         _run_in_worktree(shipping_ds, identical=False)
 
@@ -267,7 +268,7 @@ class TestUpdateShipsContent:
         assert gitlink == _head(shipping_ds["main"] / "derived")
 
 
-class TestUpdateRefreshesMtimes:
+class TestFetchRefreshesMtimes:
     def test_changed_output_stops_looking_stale(self, shipping_ds: dict):
         _run_in_worktree(shipping_ds, identical=False)
         assert _looks_stale(shipping_ds["main"])
@@ -462,7 +463,7 @@ class TestPreflightRefuses:
         assert [path for path, _ in errors] == ["derived"]
 
 
-class TestUpdateGuards:
+class TestFetchGuards:
     def test_rejects_a_worktree_that_is_its_own_target(self, shipping_ds: dict):
         with pytest.raises(ValueError, match="its own target"):
             list(fetch_nested_worktrees(
@@ -489,7 +490,92 @@ class TestUpdateGuards:
         assert "would fast-forward" in reports[0].message
 
 
-class TestUpdateCLI:
+class TestRefreshingAWorktree:
+    """
+    `fetch` with no argument, run inside a worktree.
+
+    The other direction: bring the checkout you came from into this worktree,
+    mtimes included. When the worktree is already up to date no commits move
+    and it reduces to an mtime repair -- which is all the removed
+    `sync-mtimes` subcommand ever did.
+    """
+
+    def test_source_defaults_to_where_the_worktree_came_from(self, shipping_ds: dict):
+        assert resolve_fetch_source(None, shipping_ds["wt"]) == \
+            shipping_ds["main"].resolve()
+
+    def test_a_main_checkout_has_no_default_source(self, shipping_ds: dict):
+        with pytest.raises(ValueError, match="not a linked worktree"):
+            resolve_fetch_source(None, shipping_ds["main"])
+
+    def test_restores_mtimes_reset_by_a_checkout(self, shipping_ds: dict):
+        wt, main = shipping_ds["wt"], shipping_ds["main"]
+        original = os.lstat(main / OUTPUT_FILE).st_mtime_ns
+        _touch(wt / OUTPUT_FILE)  # as a branch switch would
+        assert os.lstat(wt / OUTPUT_FILE).st_mtime_ns != original
+
+        list(fetch_nested_worktrees(main_path=wt, worktree_path=main))
+
+        assert os.lstat(wt / OUTPUT_FILE).st_mtime_ns == original
+
+    def test_nothing_moves_when_already_up_to_date(self, shipping_ds: dict):
+        before = _head(shipping_ds["wt"])
+
+        reports = list(fetch_nested_worktrees(
+            main_path=shipping_ds["wt"], worktree_path=shipping_ds["main"],
+        ))
+
+        assert _head(shipping_ds["wt"]) == before
+        assert not [r for r in reports if r.result == WorktreeResult.FETCHED]
+        assert [r.dataset_path for r in reports
+                if r.result == WorktreeResult.MTIMES_SYNCED] == [".", "derived"]
+
+    def test_brings_the_worktree_forward_when_behind(self, shipping_ds: dict):
+        """Development continued in main while the worktree sat still."""
+        main, wt = shipping_ds["main"], shipping_ds["wt"]
+        (main / "notes.md").write_text("developed in main\n")
+        Dataset(str(main)).save(message="dev", result_renderer="disabled")
+
+        reports = list(fetch_nested_worktrees(main_path=wt, worktree_path=main))
+
+        assert (wt / "notes.md").read_text() == "developed in main\n"
+        assert [r.dataset_path for r in reports
+                if r.result == WorktreeResult.FETCHED] == ["."]
+
+    def test_cli_with_no_target_from_inside_the_worktree(
+        self, shipping_ds: dict, capsys, monkeypatch,
+    ):
+        wt, main = shipping_ds["wt"], shipping_ds["main"]
+        original = os.lstat(main / OUTPUT_FILE).st_mtime_ns
+        _touch(wt / OUTPUT_FILE)
+        monkeypatch.chdir(wt)
+
+        exit_code = main_cli(["--no-color", "fetch"])
+
+        assert exit_code == 0
+        assert "mtimes" in capsys.readouterr().out
+        assert os.lstat(wt / OUTPUT_FILE).st_mtime_ns == original
+
+    def test_cli_with_no_target_in_a_main_checkout_fails(
+        self, shipping_ds: dict, capsys, monkeypatch,
+    ):
+        monkeypatch.chdir(shipping_ds["main"])
+
+        exit_code = main_cli(["--no-color", "fetch"])
+
+        assert exit_code == 1
+        assert "not a linked worktree" in capsys.readouterr().err
+
+    def test_cli_reports_a_non_repo(self, tmp_path: Path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
+        exit_code = main_cli(["--no-color", "fetch", str(tmp_path)])
+
+        assert exit_code == 1
+        assert "Not a git repository" in capsys.readouterr().err
+
+
+class TestFetchCLI:
     def test_parser_accepts_update(self):
         args = build_parser().parse_args(["fetch", "runs"])
         assert args.command == "fetch"
@@ -502,11 +588,15 @@ class TestUpdateCLI:
         assert args.dry_run is True
         assert args.no_mtimes is True
 
+    def test_parser_accepts_no_target(self):
+        args = build_parser().parse_args(["fetch"])
+        assert args.target is None
+
     def test_main_updates_by_branch_name(self, shipping_ds: dict, capsys, monkeypatch):
         _run_in_worktree(shipping_ds, identical=False)
         monkeypatch.chdir(shipping_ds["main"])
 
-        exit_code = main(["--no-color", "fetch", "runs"])
+        exit_code = main_cli(["--no-color", "fetch", "runs"])
 
         assert exit_code == 0
         out = capsys.readouterr().out
@@ -519,7 +609,7 @@ class TestUpdateCLI:
         _rewrite(shipping_ds["main"] / OUTPUT_FILE, b"hand-edited")
         monkeypatch.chdir(shipping_ds["main"])
 
-        exit_code = main(["--no-color", "fetch", "runs"])
+        exit_code = main_cli(["--no-color", "fetch", "runs"])
 
         assert exit_code == 1
         assert "would overwrite uncommitted changes" in capsys.readouterr().err

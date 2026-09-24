@@ -64,13 +64,46 @@ from datalad_worktree.core import (
     validate_superds,
 )
 from datalad_worktree.discovery import discover_subdatasets, is_git_repo_root
-from datalad_worktree.mtimes import dirty_paths, sync_dataset
+from datalad_worktree.mtimes import (
+    dirty_paths,
+    main_working_tree,
+    resolve_worktree_target,
+    sync_dataset,
+)
 
 logger = logging.getLogger(__name__)
 
 # Marked like datalad's own "[DATALAD RUNCMD]" so the log makes plain that
 # the extension made this merge, not the user.
 MERGE_COMMIT_PREFIX = "[DATALAD WORKTREE]"
+
+
+def resolve_fetch_source(target: str | None, dataset: Path) -> Path:
+    """
+    Resolve what to fetch from.
+
+    A path or a branch name is resolved the way ``delete`` resolves its
+    target. Omitting it means "the working tree this one was created from",
+    which is only answerable from inside a linked worktree -- the common
+    case of standing in a worktree and wanting its mtimes refreshed.
+
+    Raises
+    ------
+    ValueError
+        If no target is given and this is not a linked worktree.
+    """
+    if target is not None:
+        return resolve_worktree_target(target=target, dataset=dataset)
+
+    source = main_working_tree(dataset)
+    # For a main checkout that resolves to the checkout itself, which is no
+    # use as a source -- only a linked worktree knows where it came from.
+    if source is None or source == Path(dataset).resolve():
+        raise ValueError(
+            f"{dataset} is not a linked worktree, so there is no default "
+            f"source; name a worktree path or branch to fetch from"
+        )
+    return source
 
 
 def _git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:

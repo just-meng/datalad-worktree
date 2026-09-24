@@ -77,15 +77,14 @@ worktree add --no-create-branch v1.0 /tmp/wt
 worktree list
 worktree
 
-# Restore file mtimes in an existing worktree (after a get, merge, or checkout)
-worktree sync-mtimes my-feature          # by branch name
-worktree sync-mtimes /tmp/wt             # by path
-worktree sync-mtimes                     # the worktree you are standing in
-
 # Bring a worktree's results into this checkout, mtimes included
 worktree fetch my-feature                # by branch name
 worktree fetch /tmp/wt                   # by path
 worktree fetch -n my-feature             # show what would happen
+
+# Run from inside a worktree with no argument to go the other way:
+# bring the checkout it came from into this worktree, mtimes included
+worktree fetch
 
 # Delete worktrees (prompts for confirmation)
 worktree delete my-feature
@@ -103,7 +102,6 @@ If DataLad is installed, the tool registers as a DataLad extension:
 datalad worktree-add my-feature /tmp/wt
 datalad worktree-list
 datalad worktree-delete my-feature
-datalad worktree-sync-mtimes
 datalad worktree-fetch my-feature
 ```
 
@@ -130,32 +128,25 @@ worktree list [-h] [-d DATASET]
 
 Also the default when no subcommand is given (`worktree` alone).
 
-### `worktree sync-mtimes`
-
-```
-worktree sync-mtimes [-h] [--from REFERENCE] [-d DATASET] [target]
-
-  --from REFERENCE          Working tree to copy from (default: the one this
-                            worktree was created from)
-  -d, --dataset DATASET     Dataset to resolve a branch name against
-```
-
-`target` is a worktree path **or** a branch name, resolved the same way `worktree delete` resolves its target. It defaults to the current directory.
-
 ### `worktree fetch`
 
 ```
-worktree fetch [-h] [-n] [--no-mtimes] [-d DATASET] target
+worktree fetch [-h] [-n] [--no-mtimes] [-d DATASET] [target]
 
   -n, --dry-run             Show what would be done without doing it
-  --no-mtimes               Don't refresh mtimes from the worktree afterwards
+  --no-mtimes               Don't refresh mtimes from the source afterwards
   -d, --dataset DATASET     Checkout to fetch into (default: current directory)
 ```
 
-Brings the named worktree's commits into the checkout you are standing in, then
-refreshes mtimes *from* that worktree -- the inverse direction of
-`sync-mtimes`. Run it from the main checkout after a long run finishes in the
-worktree.
+Brings `target`'s commits into the checkout you are standing in, then refreshes
+mtimes *from* `target`. Run it from the main checkout after a long run finishes
+in the worktree.
+
+`target` is a worktree path **or** a branch name, resolved the same way
+`worktree delete` resolves its target. Omit it inside a worktree and it
+defaults to the checkout that worktree was created from, which is how you go
+the other way -- bringing new code and inputs into a worktree, mtimes
+included.
 
 The point of the mtime step: a plain merge moves only what git rewrote, so an
 output that came out byte-identical produces no commit and nothing moves, and
@@ -217,7 +208,7 @@ Two properties keep it safe:
 
 Reconstructing mtimes from commit dates (the `git-restore-mtime` approach) is deliberately not used — routine history rewriting (`jj squash`, rebase) would make every file look new.
 
-Pass `--no-mtimes` to skip the step. To put mtimes back after something rewrites files in an existing worktree — a `datalad get`, a merge, a `git checkout` — run `worktree sync-mtimes <branch>` from the superdataset, or `worktree sync-mtimes` from inside the worktree itself.
+Pass `--no-mtimes` to skip the step. To put mtimes back after something rewrites files in an existing worktree — a branch switch, say — run `worktree fetch` from inside the worktree, which brings the checkout it came from up to date and refreshes the timestamps with it.
 
 To check the effect on a Snakemake pipeline, diff the dry runs:
 
