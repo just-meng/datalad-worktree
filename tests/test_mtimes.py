@@ -348,6 +348,29 @@ class TestSafety:
 
         assert os.lstat(worktree / "out.txt").st_mtime_ns != OUTPUT_MTIME_NS
 
+    def test_dirty_target_file_is_skipped(self, pipeline_ds: dict):
+        """
+        The mirror case: stamping a path the *target* has modified would give
+        local work a timestamp claiming the reference's content.
+
+        ``worktree update`` copies into a checkout that is allowed to be
+        dirty, which makes this routine rather than hypothetical.
+        """
+        superds = pipeline_ds["super"]
+        worktree = _add(pipeline_ds, "wt", "feat/mtimes", preserve_mtimes=False)
+
+        _git(worktree, "annex", "unlock", "out.txt")
+        (worktree / "out.txt").write_text("edited in the target\n")
+        untouched = os.lstat(worktree / "out.txt").st_mtime_ns
+        _set_mtime(superds / "out.txt", SCRIPT_MTIME_NS)
+
+        copy_mtimes(superds, worktree)
+
+        assert os.lstat(worktree / "out.txt").st_mtime_ns == untouched
+        # a clean sibling is still carried, so this is not a blanket skip
+        assert os.lstat(worktree / "results" / "table.csv").st_mtime_ns == \
+            os.lstat(superds / "results" / "table.csv").st_mtime_ns
+
 
 class TestCopyMtimes:
     def test_returns_counts(self, pipeline_ds: dict):

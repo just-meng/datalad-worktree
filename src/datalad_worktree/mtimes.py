@@ -239,8 +239,14 @@ def transferable_paths(reference: Path, worktree: Path) -> list[str]:
     Paths whose mtime can be carried from ``reference`` to ``worktree``.
 
     A path qualifies when it is tracked in both, holds the identical blob in
-    both, is clean in the reference working tree, and is not an unlocked
-    annexed file.
+    both, is clean on *both* sides, and is not an unlocked annexed file.
+
+    Both sides have to be clean because a dirty path's mtime describes
+    content that side's HEAD does not have. In the reference that would
+    export a timestamp for content the target never received; in the target
+    it would overwrite the timestamp of uncommitted local work with one that
+    claims the reference's content. ``worktree update`` ships into a
+    checkout that is allowed to be dirty, so the second case is routine.
     """
     ref_entries = _tracked_entries(reference)
     if not ref_entries:
@@ -248,7 +254,7 @@ def transferable_paths(reference: Path, worktree: Path) -> list[str]:
 
     ref_blobs = {path: oid for _mode, oid, _size, path in ref_entries}
     wt_blobs = tracked_blobs(worktree)
-    dirty = dirty_paths(reference)
+    dirty = dirty_paths(reference) | dirty_paths(worktree)
     # Same blob on both sides, so the reference's lock state is the worktree's.
     unlocked = _unlocked_from_entries(reference, ref_entries)
 
