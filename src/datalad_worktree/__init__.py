@@ -9,6 +9,6 @@ command_suite = (
         ("datalad_worktree.dl_command", "WorktreeAdd", "worktree-add"),
         ("datalad_worktree.dl_command", "WorktreeList", "worktree-list"),
         ("datalad_worktree.dl_command", "WorktreeDelete", "worktree-delete"),
-        ("datalad_worktree.dl_command", "WorktreeSyncMtimes", "worktree-sync-mtimes"),
+        ("datalad_worktree.dl_command", "WorktreeFetch", "worktree-fetch"),
     ],
 )

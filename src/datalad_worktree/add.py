@@ -16,9 +16,12 @@ from datalad_worktree.core import (
     WorktreeResult,
     git_branch_checked_out_at,
     git_branch_exists,
+    git_current_branch,
+    git_worktree_list,
     validate_superds,
 )
 from datalad_worktree.discovery import SubDataset, discover_subdatasets, is_git_repo
+from datalad_worktree.fetch import fast_forward_state
 from datalad_worktree.mtimes import sync_dataset
 
 logger = logging.getLogger(__name__)
@@ -108,26 +111,95 @@ def _prepare_destination(dest_path: Path) -> None:
             )
 
 
+def existing_worktrees(
+    superds_path: Path,
+    worktree_root: Path,
+    subdatasets: list[SubDataset],
+) -> list[tuple[str, Path, Path]]:
+    """
+    ``(dataset_path, repo, worktree)`` for destinations git already knows.
+
+    Only paths git reports as worktrees are listed. A stray directory that
+    merely happens to sit at the destination is deliberately not included:
+    ``--force`` replaces worktrees, it does not delete arbitrary directories.
+    """
+    found: list[tuple[str, Path, Path]] = []
+    candidates = [(".", superds_path, worktree_root)]
+    candidates += [
+        (s.rel_path, s.abs_path, worktree_root / s.rel_path)
+        for s in subdatasets if s.installed and is_git_repo(s.abs_path)
+    ]
+    for dataset_path, repo, destination in candidates:
+        known = {entry.path.resolve() for entry in git_worktree_list(repo)}
+        if destination.exists() and destination.resolve() in known:
+            found.append((dataset_path, repo, destination))
+    return found
+
+
+def unmerged_worktrees(
+    existing: list[tuple[str, Path, Path]],
+) -> list[tuple[str, str]]:
+    """
+    Which existing worktrees still hold commits the main checkout lacks.
+
+    Replacing one of those throws work away, so ``--force`` refuses and
+    ``--force-unmerged`` is required. Merged means the worktree's tip is
+    contained in its main checkout's HEAD -- ``up-to-date`` or ``behind`` --
+    which is the state a ``worktree fetch`` leaves behind. A detached HEAD
+    counts as unmerged, since there is no branch to reason about.
+    """
+    unmerged: list[tuple[str, str]] = []
+    for dataset_path, repo, worktree in existing:
+        state, branch = fast_forward_state(repo, worktree)
+        if state in ("up-to-date", "behind"):
+            continue
+        detail = (
+            "detached HEAD" if state == "no-branch"
+            else f"'{branch}' has commits not in {git_current_branch(repo) or 'HEAD'}"
+        )
+        unmerged.append((
+            dataset_path,
+            f"{worktree} still holds unmerged work ({detail}); "
+            f"fetch it first, or use --force-unmerged to discard it",
+        ))
+    return unmerged
+
+
 def _preflight_check(
     superds_path: Path,
     worktree_root: Path,
     branch: str,
     subdatasets: list[SubDataset],
     create_branch: bool,
-    force: bool,
+    replaced_root: Path | None = None,
 ) -> list[tuple[str, str]]:
     """
     Check all datasets before creating any worktrees.
 
+    ``replaced_root`` names a worktree root that is being replaced, so that
+    its own path and its own branch checkouts are not reported as conflicts.
+
     Returns a list of (dataset_path, error_message) pairs. Empty means all clear.
     """
     errors: list[tuple[str, str]] = []
+    replacing = replaced_root is not None and replaced_root == worktree_root
+
+    def conflicts_elsewhere(repo: Path, relative: str) -> Path | None:
+        """A checkout of ``branch`` that is not the worktree being replaced."""
+        at = git_branch_checked_out_at(repo, branch)
+        if at is None:
+            return None
+        if replacing:
+            mine = worktree_root if relative == "." else worktree_root / relative
+            if at.resolve() == mine.resolve():
+                return None
+        return at
 
     # Check superds
-    if worktree_root.exists() and not force:
+    if worktree_root.exists() and not replacing:
         errors.append((".", f"worktree root already exists: {worktree_root}"))
     else:
-        conflict = git_branch_checked_out_at(superds_path, branch)
+        conflict = conflicts_elsewhere(superds_path, ".")
         if conflict is not None:
             errors.append(
                 (".", f"branch '{branch}' is already checked out at {conflict}")
@@ -142,7 +214,7 @@ def _preflight_check(
         if not subds.installed or not is_git_repo(subds.abs_path):
             continue  # will be skipped, no conflict possible
 
-        conflict = git_branch_checked_out_at(subds.abs_path, branch)
+        conflict = conflicts_elsewhere(subds.abs_path, subds.rel_path)
         if conflict is not None:
             errors.append((
                 subds.rel_path,
@@ -163,6 +235,7 @@ def create_nested_worktrees(
     branch: str,
     create_branch: bool = True,
     force: bool = False,
+    force_unmerged: bool = False,
     dry_run: bool = False,
     configure_containers: bool = True,
     preserve_mtimes: bool = True,
@@ -173,6 +246,13 @@ def create_nested_worktrees(
     Runs a pre-flight check before creating anything. If any non-skipped
     dataset would fail (e.g. branch already checked out elsewhere), no
     worktrees are created and errors are yielded as FAILED reports.
+
+    ``force`` replaces worktrees that already exist at the destination,
+    deleting their branches too so the recreate starts from the main
+    checkout's state -- worktrees are meant to be disposable. It refuses,
+    changing nothing, if any of them still holds commits the main checkout
+    lacks; ``force_unmerged`` discards those as well. Uncommitted changes are
+    always discarded, as ``worktree delete --force`` does.
 
     Unless ``configure_containers`` is False, every created worktree that
     registers a container gets bind-mount configuration so that
@@ -205,11 +285,51 @@ def create_nested_worktrees(
     # ── Discover subdatasets ─────────────────────────────────────────────
     subdatasets = discover_subdatasets(superds_path)
 
+    # ── Replace an existing worktree ─────────────────────────────────────
+    # Done before the pre-flight so that the path and branch conflicts it
+    # would otherwise report are already gone.
+    replaced_root: Path | None = None
+    if force or force_unmerged:
+        existing = existing_worktrees(superds_path, worktree_root, subdatasets)
+        if existing:
+            replaced_root = worktree_root
+            if not force_unmerged:
+                blocked = unmerged_worktrees(existing)
+                if blocked:
+                    for dataset_path, message in blocked:
+                        yield WorktreeReport(
+                            dataset_path=dataset_path,
+                            source=superds_path,
+                            destination=worktree_root / dataset_path,
+                            result=WorktreeResult.FAILED,
+                            branch=branch,
+                            message=message,
+                        )
+                    return
+            if dry_run:
+                for dataset_path, _repo, destination in reversed(existing):
+                    yield WorktreeReport(
+                        dataset_path=dataset_path,
+                        source=superds_path,
+                        destination=destination,
+                        result=WorktreeResult.SKIPPED_DRY_RUN,
+                        branch=branch,
+                        message=f"would replace the worktree at {destination}",
+                    )
+            else:
+                from datalad_worktree.delete import delete_nested_worktrees
+                yield from delete_nested_worktrees(
+                    superds_path=superds_path,
+                    target=str(worktree_root),
+                    delete_branch=True,
+                    force=True,
+                )
+
     # ── Pre-flight check ─────────────────────────────────────────────────
     if not dry_run:
         errors = _preflight_check(
             superds_path, worktree_root, branch, subdatasets,
-            create_branch, force,
+            create_branch, replaced_root,
         )
         if errors:
             for dataset_path, msg in errors:
