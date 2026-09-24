@@ -23,11 +23,17 @@ worktree is the reference, the main checkout is the target. Matching on blob
 OID means only byte-identical content inherits an mtime, so the update can
 never claim freshness for content the main checkout does not have.
 
-**Fast-forward only, for now.** A real merge across a hierarchy can conflict
-on submodule gitlinks, and such a conflict does not resolve by re-saving the
-superdataset -- it leaves the superdataset pointing at a commit its own
-subdataset checkout does not have. Divergence is therefore refused, and every
-dataset is judged up front so that a refusal touches nothing.
+**Fast-forward when possible, a merge only when git says it is safe.** A
+fast-forward is preferred because it cannot conflict. When a dataset has
+diverged -- which happens routinely, since recording a subdataset's new state
+in the superdataset is itself a superdataset commit -- ``git merge-tree
+--write-tree`` is asked to perform the merge in memory first. It merges
+cleanly when the two sides moved different paths, and reports a conflict when
+both moved the same one, notably the same submodule gitlink. Only the latter
+is refused, because a gitlink conflict does not resolve by re-saving the
+superdataset: it leaves the superdataset pointing at a commit its own
+subdataset checkout does not have. Every dataset is judged up front, so a
+refusal touches nothing.
 
 Fast-forward is also what makes shipping into a *dirty* checkout safe, which
 ``git rebase`` -- the obvious alternative -- cannot do. Rebase replays
@@ -61,6 +67,10 @@ from datalad_worktree.discovery import discover_subdatasets, is_git_repo_root
 from datalad_worktree.mtimes import dirty_paths, sync_dataset
 
 logger = logging.getLogger(__name__)
+
+# Marked like datalad's own "[DATALAD RUNCMD]" so the log makes plain that
+# the extension made this merge, not the user.
+MERGE_COMMIT_PREFIX = "[DATALAD WORKTREE]"
 
 
 def _git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
@@ -132,7 +142,7 @@ def fast_forward_state(main: Path, worktree: Path) -> tuple[str, str]:
         still. There is nothing to ship, which is not an error.
     ``diverged``
         Both sides have commits the other lacks. Needs a real merge, which
-        this command does not attempt.
+        ``merge_prediction`` decides the safety of.
     ``no-branch``
         The worktree is on a detached HEAD; there is no branch to bring in.
     """
@@ -161,6 +171,37 @@ def fast_forward_state(main: Path, worktree: Path) -> tuple[str, str]:
         return "behind", branch
 
     return "diverged", branch
+
+
+def merge_prediction(main: Path, branch: str) -> tuple[str, set[str]]:
+    """
+    Whether merging ``branch`` into ``main`` would conflict, without merging.
+
+    ``git merge-tree --write-tree`` performs the merge entirely in memory and
+    exits 1 listing the conflicted paths, so divergence can be judged before
+    the working tree is touched. That distinction matters: two superdataset
+    commits that move *different* paths -- results on one side, a ``code``
+    gitlink on the other -- merge cleanly, while both sides moving the *same*
+    gitlink is the case that leaves a superdataset pointing at a commit its
+    own subdataset checkout does not have.
+
+    Returns ``("clean", set())``, ``("conflict", paths)``, or
+    ``("unsupported", set())`` when git is too old to be asked (before 2.38).
+    """
+    result = _git(main, "merge-tree", "--write-tree", "--name-only", "HEAD", branch)
+    if result.returncode == 0:
+        return "clean", set()
+    if result.returncode != 1:
+        logger.debug("merge-tree unavailable in %s: %s", main, result.stderr.strip())
+        return "unsupported", set()
+
+    # "<tree oid>\n<conflicted path>...\n\n<informational messages>"
+    conflicted: set[str] = set()
+    for line in result.stdout.splitlines()[1:]:
+        if not line.strip():
+            break
+        conflicted.add(line.strip())
+    return "conflict", conflicted
 
 
 def commits_ahead(main: Path, branch: str) -> int:
@@ -205,13 +246,24 @@ def preflight(pairs: list[DatasetPair]) -> list[tuple[str, str]]:
             continue  # nothing to bring in, so nothing can collide
 
         if state == "diverged":
-            errors.append((
-                pair.dataset_path,
-                f"'{branch}' has diverged from "
-                f"{git_current_branch(pair.main) or 'HEAD'}; merge it "
-                f"yourself, then re-run to refresh mtimes",
-            ))
-            continue
+            verdict, conflicted = merge_prediction(pair.main, branch)
+            if verdict == "conflict":
+                errors.append((
+                    pair.dataset_path,
+                    f"'{branch}' conflicts with "
+                    f"{git_current_branch(pair.main) or 'HEAD'} in: "
+                    f"{_listed(conflicted)}; resolve it yourself, then re-run "
+                    f"to refresh mtimes",
+                ))
+                continue
+            if verdict == "unsupported":
+                errors.append((
+                    pair.dataset_path,
+                    f"'{branch}' has diverged and this git cannot predict the "
+                    f"merge (needs 2.38+); merge it yourself, then re-run to "
+                    f"refresh mtimes",
+                ))
+                continue
 
         clash = collisions(pair.main, branch)
         if clash:
@@ -304,22 +356,35 @@ def fetch_nested_worktrees(
             continue
 
         ahead = commits_ahead(pair.main, branch)
+        how = "fast-forward" if state == "ready" else "merge"
         if dry_run:
             yield report(pair, WorktreeResult.SKIPPED_DRY_RUN, branch,
-                         f"would fast-forward {ahead} commits from '{branch}'")
+                         f"would {how} {ahead} commits from '{branch}'")
             continue
 
-        merged = _git(pair.main, "merge", "--ff-only", branch)
+        if state == "ready":
+            merged = _git(pair.main, "merge", "--ff-only", branch)
+        else:
+            # Divergence that merge-tree called clean. Pre-flight already
+            # refused anything it predicted would conflict.
+            merged = _git(
+                pair.main, "merge", "--no-edit",
+                "-m", f"{MERGE_COMMIT_PREFIX} Merge worktree branch '{branch}'",
+                branch,
+            )
+
         if merged.returncode != 0:
             # Pre-flight cleared this, so the state changed underneath us.
-            # Stop rather than leave the hierarchy part-shipped.
+            # Undo any half-applied merge and stop rather than leave the
+            # hierarchy part-shipped.
+            _git(pair.main, "merge", "--abort")
             detail = (merged.stderr or merged.stdout).strip().replace("\n", " ")
             yield report(pair, WorktreeResult.FAILED, branch,
-                         f"fast-forward failed: {detail[:160]}")
+                         f"{how} failed: {detail[:160]}")
             return
 
         yield report(pair, WorktreeResult.FETCHED, branch,
-                     f"{ahead} commits from '{branch}'")
+                     f"{ahead} commits from '{branch}' ({how})")
 
     # ── Refresh mtimes from the worktree ────────────────────────────────
     # Reversed direction: the worktree is the reference, the main checkout is

@@ -15,10 +15,12 @@ from datalad_worktree.add import create_nested_worktrees
 from datalad_worktree.cli import build_parser, main
 from datalad_worktree.core import WorktreeResult
 from datalad_worktree.fetch import (
+    MERGE_COMMIT_PREFIX,
     collisions,
     dataset_pairs,
     fast_forward_state,
     incoming_paths,
+    merge_prediction,
     preflight,
     fetch_nested_worktrees,
 )
@@ -343,6 +345,83 @@ class TestShippingIntoADirtyCheckout:
         assert os.lstat(shipping_ds["main"] / INPUT_FILE).st_mtime_ns == before
 
 
+class TestCleanDivergenceIsMerged:
+    """
+    Divergence is routine, not a conflict.
+
+    Recording a subdataset's new state in the superdataset is itself a
+    superdataset commit, so as soon as work continues in the main checkout
+    both sides have superdataset commits. When those commits moved *different*
+    paths the merge is trivial, and `git merge-tree` says so before anything
+    is touched.
+    """
+
+    def _diverge(self, shipping_ds: dict) -> None:
+        _run_in_worktree(shipping_ds, identical=False)
+        (shipping_ds["main"] / "notes.md").write_text("carried on working\n")
+        Dataset(str(shipping_ds["main"])).save(
+            message="unrelated superdataset work", result_renderer="disabled",
+        )
+
+    def test_prediction_is_clean_for_disjoint_changes(self, shipping_ds: dict):
+        self._diverge(shipping_ds)
+
+        verdict, conflicted = merge_prediction(shipping_ds["main"], "runs")
+
+        assert verdict == "clean"
+        assert conflicted == set()
+
+    def test_prediction_is_conflict_on_the_same_path(self, shipping_ds: dict):
+        _run_in_worktree(shipping_ds, identical=False)
+        main_sub = shipping_ds["main"] / "derived"
+        _rewrite(main_sub / "vis/ses-A/heatmaps/a.png", b"\x89PNG" + b"local" * 50)
+        Dataset(str(main_sub)).save(message="local edit", result_renderer="disabled")
+
+        verdict, conflicted = merge_prediction(main_sub, "runs")
+
+        assert verdict == "conflict"
+        assert "vis/ses-A/heatmaps/a.png" in conflicted
+
+    def test_diverged_superdataset_is_merged(self, shipping_ds: dict):
+        self._diverge(shipping_ds)
+
+        reports = _fetch(shipping_ds)
+
+        assert not [r for r in reports if r.result == WorktreeResult.FAILED]
+        how = {r.dataset_path: r.message
+               for r in reports if r.result == WorktreeResult.FETCHED}
+        assert "fast-forward" in how["derived"]
+        assert "merge" in how["."]
+
+    def test_the_merge_keeps_both_sides(self, shipping_ds: dict):
+        self._diverge(shipping_ds)
+
+        _fetch(shipping_ds)
+
+        assert (shipping_ds["main"] / OUTPUT_FILE).read_bytes() == \
+            b"\x89PNG" + b"v2" * 50
+        assert (shipping_ds["main"] / "notes.md").read_text() == "carried on working\n"
+        assert not _looks_stale(shipping_ds["main"])
+
+    def test_the_gitlink_agrees_with_the_subdataset_checkout(self, shipping_ds: dict):
+        """The thing a superdataset merge can silently get wrong."""
+        self._diverge(shipping_ds)
+
+        _fetch(shipping_ds)
+
+        gitlink = _git(shipping_ds["main"], "rev-parse", "HEAD:derived").stdout.strip()
+        assert gitlink == _head(shipping_ds["main"] / "derived")
+        assert _git(shipping_ds["main"], "status", "--porcelain").stdout == ""
+
+    def test_the_merge_commit_is_marked_as_extension_made(self, shipping_ds: dict):
+        self._diverge(shipping_ds)
+
+        _fetch(shipping_ds)
+
+        subject = _git(shipping_ds["main"], "log", "-1", "--format=%s").stdout
+        assert subject.startswith(MERGE_COMMIT_PREFIX)
+
+
 class TestPreflightRefuses:
     def test_colliding_path_changes_nothing(self, shipping_ds: dict):
         _run_in_worktree(shipping_ds, identical=False)
@@ -358,18 +437,19 @@ class TestPreflightRefuses:
         assert (shipping_ds["main"] / OUTPUT_FILE).read_bytes() == \
             b"hand-edited, uncommitted"
 
-    def test_diverged_subdataset_changes_nothing(self, shipping_ds: dict):
+    def test_conflicting_divergence_changes_nothing(self, shipping_ds: dict):
+        """Both sides rewrote the same output: merge-tree reports a conflict."""
         _run_in_worktree(shipping_ds, identical=False)
         main_sub = shipping_ds["main"] / "derived"
-        (main_sub / "notes.md").write_text("meanwhile\n")
-        Dataset(str(main_sub)).save(message="unrelated", result_renderer="disabled")
+        _rewrite(main_sub / "vis/ses-A/heatmaps/a.png", b"\x89PNG" + b"local" * 50)
+        Dataset(str(main_sub)).save(message="local edit", result_renderer="disabled")
         before_super = _head(shipping_ds["main"])
         before_sub = _head(main_sub)
 
         reports = _fetch(shipping_ds)
 
         assert all(r.result == WorktreeResult.FAILED for r in reports)
-        assert any("has diverged" in r.message for r in reports)
+        assert any("conflicts with" in r.message for r in reports)
         assert _head(shipping_ds["main"]) == before_super
         assert _head(main_sub) == before_sub
 
