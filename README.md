@@ -40,6 +40,9 @@ worktree add my-feature /tmp/worktrees/my-feature
 # List all worktrees across the hierarchy (also the default with no subcommand)
 worktree list
 
+# Bring a finished run's results home, mtimes included
+worktree fetch my-feature
+
 # Delete worktrees by branch name
 worktree delete my-feature
 ```
@@ -79,6 +82,11 @@ worktree sync-mtimes my-feature          # by branch name
 worktree sync-mtimes /tmp/wt             # by path
 worktree sync-mtimes                     # the worktree you are standing in
 
+# Bring a worktree's results into this checkout, mtimes included
+worktree fetch my-feature                # by branch name
+worktree fetch /tmp/wt                   # by path
+worktree fetch -n my-feature             # show what would happen
+
 # Delete worktrees (prompts for confirmation)
 worktree delete my-feature
 worktree delete /tmp/wt
@@ -96,6 +104,7 @@ datalad worktree-add my-feature /tmp/wt
 datalad worktree-list
 datalad worktree-delete my-feature
 datalad worktree-sync-mtimes
+datalad worktree-fetch my-feature
 ```
 
 ## CLI Reference
@@ -132,6 +141,32 @@ worktree sync-mtimes [-h] [--from REFERENCE] [-d DATASET] [target]
 ```
 
 `target` is a worktree path **or** a branch name, resolved the same way `worktree delete` resolves its target. It defaults to the current directory.
+
+### `worktree fetch`
+
+```
+worktree fetch [-h] [-n] [--no-mtimes] [-d DATASET] target
+
+  -n, --dry-run             Show what would be done without doing it
+  --no-mtimes               Don't refresh mtimes from the worktree afterwards
+  -d, --dataset DATASET     Checkout to fetch into (default: current directory)
+```
+
+Brings the named worktree's commits into the checkout you are standing in, then
+refreshes mtimes *from* that worktree -- the inverse direction of
+`sync-mtimes`. Run it from the main checkout after a long run finishes in the
+worktree.
+
+The point of the mtime step: a plain merge moves only what git rewrote, so an
+output that came out byte-identical produces no commit and nothing moves, and
+even a changed output never moves its *grandparent* directory -- which is what
+Snakemake's `directory()` output reads. Without the refresh, freshly computed
+results look stale and rerun.
+
+Unrelated uncommitted work does not block it: only paths the fetch would
+actually overwrite are refused, by name. A dataset the worktree merely
+consumed (your `code/` subdataset, say) is reported as having nothing to ship
+and skipped.
 
 ### `worktree delete`
 
@@ -195,6 +230,44 @@ diff /tmp/main.jobs /tmp/wt.jobs && echo "PASS: worktree inherits main's stalene
 ```
 
 A non-empty diff *only* for rules whose staleness comes from a `params`/`code`/`software-env` rerun trigger is expected: those are recorded in the untracked `.snakemake/metadata`, which is not a worktree's concern and is not copied.
+
+### Fetch
+
+The counterpart of `add`: run the long pipeline in a worktree, then bring the
+results into the checkout you are standing in.
+
+1. **Pair up** every dataset on both sides, superdataset first.
+2. **Pre-flight** all of them. Refuses — touching nothing — if a dataset has
+   diverged in a way `git merge-tree` reports as conflicting, or if the
+   incoming paths overlap paths you have modified locally.
+3. **Transport** deepest-first, so a submodule gitlink never arrives before the
+   commit it names. Fast-forward where possible, a real merge where the sides
+   have diverged cleanly.
+4. **Refresh mtimes** from the source, across the whole hierarchy.
+
+Step 4 is the point. Git moves only what it rewrites, so a changed output moves
+its file and its immediate parent but never the *grandparent* directory — which
+is what Snakemake's `directory()` output reads — and an output that came out
+byte-identical produces no commit at all, so nothing moves. Either way the work
+is done and the pipeline would run it again.
+
+Direction follows from where you run it, because the data always lands in the
+tree you are standing in:
+
+```bash
+cd /data/my-superdataset
+worktree fetch runs        # ship the run's results home
+
+cd /tmp/worktrees/runs
+worktree fetch             # the other way: bring new code and inputs in
+```
+
+Fast-forward is preferred over rebase deliberately. `git rebase` demands a clean
+tree unconditionally, even for files it will not touch, while a fast-forward
+rewrites only the paths that differ — so results can land in a checkout where
+development is still going on, and unrelated work in progress is left alone. A
+dataset the worktree merely consumed is strictly *behind*, which is "nothing to
+ship" rather than a conflict, and is skipped.
 
 ### List
 

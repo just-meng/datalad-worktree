@@ -1,6 +1,6 @@
 """
-DataLad command interfaces for worktree-add, worktree-list, worktree-delete
-and worktree-sync-mtimes.
+DataLad command interfaces for worktree-add, worktree-list, worktree-delete,
+worktree-sync-mtimes and worktree-fetch.
 
 Requires DataLad to be installed.
 """
@@ -621,6 +621,128 @@ try:
                     type="dataset",
                 )
 
+    @build_doc
+    class WorktreeFetch(Interface):
+        """Fast-forward a worktree's commits into this checkout, mtimes included.
+
+        The counterpart of ``worktree-add``: run the long pipeline in a
+        worktree, then bring the results home. A plain merge or rebase gets
+        the content right and the mtimes wrong -- git moves only what it
+        rewrites, so a byte-identical result moves nothing at all and a
+        make-style pipeline reruns it forever. This ships the commits and
+        then copies the mtimes the pipeline produced out of the worktree.
+
+        Fast-forwards where it can. Where a dataset has diverged, git is
+        asked to perform the merge in memory first, and it goes ahead only
+        if that comes out clean; a conflict is reported and nothing is
+        touched.
+
+        Examples::
+
+            # Bring the worktree on branch 'runs' into the current dataset
+            datalad worktree-fetch runs
+
+            # By path, showing what would happen first
+            datalad worktree-fetch -n /tmp/worktrees/runs
+        """
+
+        @staticmethod
+        def custom_result_renderer(res, **kwargs):
+            if res["action"] != "worktree-fetch":
+                default_result_renderer(res)
+                return
+
+            label = res.get("dataset_path", "") or "."
+            status = res.get("status")
+            if status == "ok":
+                word = "mtimes" if res.get("mtimes") else "fetch"
+                color = ac.CYAN if res.get("mtimes") else ac.GREEN
+                ui.message("{} {} ({})".format(
+                    ac.color_word(word, color), label, res.get("message", ""),
+                ))
+            elif status == "notneeded":
+                ui.message("{}   {} ({})".format(
+                    ac.color_word("skip", ac.YELLOW),
+                    label, res.get("message", ""),
+                ))
+            else:
+                ui.message("{} {}: {}".format(
+                    ac.color_word("error", ac.RED),
+                    label, res.get("message", ""),
+                ))
+
+        @staticmethod
+        def custom_result_summary_renderer(results):
+            fetched = sum(
+                1 for res in results
+                if res.get("action") == "worktree-fetch"
+                and res.get("status") == "ok" and not res.get("mtimes")
+            )
+            ui.message(f"{fetched} datasets fetched")
+
+        _params_ = dict(
+            target=Parameter(
+                args=("target",),
+                doc="""Worktree path or branch name to ship from""",
+                constraints=EnsureStr(),
+            ),
+            dataset=Parameter(
+                args=("-d", "--dataset"),
+                doc="""Checkout to fetch into (default: current directory)""",
+                constraints=EnsureStr() | EnsureNone(),
+            ),
+            dry_run=Parameter(
+                args=("-n", "--dry-run"),
+                action="store_true",
+                doc="""Show what would be done without doing it""",
+            ),
+            no_mtimes=Parameter(
+                args=("--no-mtimes",),
+                action="store_true",
+                doc="""Don't refresh mtimes from the worktree afterwards""",
+            ),
+        )
+
+        @staticmethod
+        @eval_results
+        def __call__(target, dataset=None, dry_run=False, no_mtimes=False):
+            from datalad_worktree.core import SKIPPED_RESULTS, WorktreeResult
+            from datalad_worktree.mtimes import resolve_worktree_target
+            from datalad_worktree.fetch import fetch_nested_worktrees
+
+            main_path = Path(dataset).resolve() if dataset else Path.cwd()
+            worktree_root = resolve_worktree_target(
+                target=target,
+                dataset=Path(dataset) if dataset else None,
+            )
+
+            for report in fetch_nested_worktrees(
+                main_path=main_path,
+                worktree_path=worktree_root,
+                dry_run=dry_run,
+                preserve_mtimes=not no_mtimes,
+            ):
+                if report.result in (
+                    WorktreeResult.FETCHED, WorktreeResult.MTIMES_SYNCED,
+                ):
+                    status = "ok"
+                elif report.result in SKIPPED_RESULTS:
+                    status = "notneeded"
+                else:
+                    status = "error"
+
+                yield get_status_dict(
+                    action="worktree-fetch",
+                    path=str(report.destination),
+                    status=status,
+                    message=report.message,
+                    source=str(report.source),
+                    dataset_path=report.dataset_path,
+                    branch=report.branch,
+                    mtimes=report.result == WorktreeResult.MTIMES_SYNCED,
+                    type="dataset",
+                )
+
 except ImportError:
     logger.debug(
         "DataLad not available; datalad worktree commands not registered"
@@ -648,6 +770,13 @@ except ImportError:
             )
 
     class WorktreeSyncMtimes:
+        """Placeholder when DataLad is not installed."""
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError(
+                "DataLad is not installed. Use the standalone CLI: worktree"
+            )
+
+    class WorktreeFetch:
         """Placeholder when DataLad is not installed."""
         def __call__(self, *args, **kwargs):
             raise RuntimeError(

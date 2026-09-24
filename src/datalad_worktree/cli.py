@@ -6,6 +6,7 @@ Can be invoked as:
   - ``worktree`` or ``worktree list``
   - ``worktree delete <path-or-branch>``
   - ``worktree sync-mtimes [path-or-branch]``
+  - ``worktree fetch <path-or-branch>``
   - ``python -m datalad_worktree ...``
 """
 
@@ -75,6 +76,12 @@ def _render_report(report: WorktreeReport) -> None:
         print(f"{C.CYAN}config{C.NC} {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.MTIMES_SYNCED:
         print(f"{C.CYAN}mtimes{C.NC} {label} {C.DIM}({report.message}){C.NC}")
+    elif report.result == WorktreeResult.FETCHED:
+        if is_tty:
+            print("\033[2K", end="")
+        print(f"{C.GREEN}fetch{C.NC}  {label} {C.DIM}({report.message}){C.NC}")
+    elif report.result == WorktreeResult.SKIPPED_UP_TO_DATE:
+        print(f"{C.YELLOW}skip{C.NC}   {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.DELETED:
         print(f"{C.GREEN}delete{C.NC} {label} -> {dest}")
     elif report.result == WorktreeResult.DELETED_BRANCH:
@@ -169,6 +176,29 @@ def build_parser():
     sync_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
         help="path to the superdataset root (default: current directory)",
+    )
+
+    # ── fetch ────────────────────────────────────────────────────────────
+    fetch_p = sub.add_parser(
+        "fetch",
+        help="bring a worktree's commits into this checkout, mtimes included",
+    )
+    # Same target shape as delete and sync-mtimes: a path or a branch name.
+    fetch_p.add_argument(
+        "target",
+        help="worktree path or branch name to ship from",
+    )
+    fetch_p.add_argument(
+        "-n", "--dry-run", action="store_true", default=False,
+        help="show what would be done without doing it",
+    )
+    fetch_p.add_argument(
+        "--no-mtimes", action="store_true", default=False,
+        help="don't refresh mtimes from the worktree afterwards",
+    )
+    fetch_p.add_argument(
+        "-d", "--dataset", type=Path, default=None,
+        help="path to the checkout to fetch into (default: current directory)",
     )
 
     # ── delete ───────────────────────────────────────────────────────────
@@ -283,6 +313,37 @@ def _cmd_sync_mtimes(args) -> int:
     print(f"\n{synced} datasets synced at {worktree_path}")
 
     return 1 if any(r.result == WorktreeResult.FAILED for r in reports) else 0
+
+
+def _cmd_fetch(args) -> int:
+    from datalad_worktree.mtimes import resolve_worktree_target
+    from datalad_worktree.fetch import fetch_nested_worktrees
+
+    main_path = (args.dataset or Path.cwd()).resolve()
+
+    reports: list[WorktreeReport] = []
+    try:
+        worktree_path = resolve_worktree_target(
+            target=args.target,
+            dataset=args.dataset,
+        )
+        for report in fetch_nested_worktrees(
+            main_path=main_path,
+            worktree_path=worktree_path,
+            dry_run=args.dry_run,
+            preserve_mtimes=not args.no_mtimes,
+        ):
+            _render_report(report)
+            reports.append(report)
+    except ValueError as e:
+        print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
+        return 1
+
+    fetched = sum(1 for r in reports if r.result == WorktreeResult.FETCHED)
+    failed = sum(1 for r in reports if r.result == WorktreeResult.FAILED)
+    print(f"\n{fetched} fetched, {failed} failed from {worktree_path}")
+
+    return 1 if failed else 0
 
 
 def _cmd_list(args) -> int:
@@ -436,6 +497,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_delete(args)
     elif args.command == "sync-mtimes":
         return _cmd_sync_mtimes(args)
+    elif args.command == "fetch":
+        return _cmd_fetch(args)
 
     parser.print_help()
     return 1

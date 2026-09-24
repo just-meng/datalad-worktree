@@ -28,8 +28,10 @@ class WorktreeResult(Enum):
     SKIPPED_DRY_RUN = auto()
     SKIPPED_NO_WORKTREE = auto()   # delete: no worktree found at path/branch
     SKIPPED_CONTAINER = auto()     # add: container left unconfigured (see message)
+    SKIPPED_UP_TO_DATE = auto()    # fetch: nothing in the worktree to bring in
     CONFIGURED = auto()            # add: container bind-mount config written
     MTIMES_SYNCED = auto()         # add: mtimes copied from the source working tree
+    FETCHED = auto()               # fetch: a worktree's commits brought in
     DELETED = auto()
     DELETED_BRANCH = auto()
     FAILED = auto()
@@ -41,6 +43,7 @@ SKIPPED_RESULTS = frozenset({
     WorktreeResult.SKIPPED_DRY_RUN,
     WorktreeResult.SKIPPED_NO_WORKTREE,
     WorktreeResult.SKIPPED_CONTAINER,
+    WorktreeResult.SKIPPED_UP_TO_DATE,
 })
 
 
