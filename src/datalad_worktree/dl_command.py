@@ -149,7 +149,16 @@ try:
             ),
             force=Parameter(
                 args=("-f", "--force"),
-                doc="Pass --force to git worktree add",
+                doc="""Replace worktrees that already exist at the
+                destination, deleting their branches too. Refuses if any
+                still holds commits the main checkout lacks""",
+                action="store_true",
+                default=False,
+            ),
+            force_unmerged=Parameter(
+                args=("-F", "--force-unmerged"),
+                doc="""Replace them even if they hold unmerged work
+                (implies --force)""",
                 action="store_true",
                 default=False,
             ),
@@ -183,6 +192,7 @@ try:
             dataset=None,
             no_create_branch=False,
             force=False,
+            force_unmerged=False,
             dry_run=False,
             no_bindpaths=False,
             no_mtimes=False,
@@ -206,7 +216,8 @@ try:
                 worktree_path=Path(worktree_path),
                 branch=branch,
                 create_branch=not no_create_branch,
-                force=force,
+                force=force or force_unmerged,
+                force_unmerged=force_unmerged,
                 dry_run=dry_run,
                 configure_containers=not no_bindpaths,
                 preserve_mtimes=not no_mtimes,

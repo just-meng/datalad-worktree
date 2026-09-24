@@ -70,8 +70,11 @@ All commands are run from the superdataset root (or pass `-d <path>` to specify 
 # Create worktrees
 worktree add <branch> <worktree-path>
 worktree add --dry-run experiment /tmp/wt
-worktree add --force my-feature /tmp/wt
 worktree add --no-create-branch v1.0 /tmp/wt
+
+# Replace an existing worktree (refuses if it still holds unmerged work)
+worktree add -f runs /tmp/worktrees/runs
+worktree add -F runs /tmp/worktrees/runs    # discard the unmerged work too
 
 # List worktrees (grouped by branch); also the default with no subcommand
 worktree list
@@ -110,11 +113,14 @@ datalad worktree-fetch my-feature
 ### `worktree add`
 
 ```
-worktree add [-h] [-n] [-f] [--no-create-branch] [--no-bindpaths] [--no-mtimes]
-             [-d DATASET] branch worktree_path
+worktree add [-h] [-n] [-f] [-F] [--no-create-branch] [--no-bindpaths]
+             [--no-mtimes] [-d DATASET] branch worktree_path
 
   -n, --dry-run             Show what would be done without doing it
-  -f, --force               Pass --force to git worktree add
+  -f, --force               Replace worktrees already at the destination,
+                            deleting their branches too. Refuses if any still
+                            holds commits the main checkout lacks
+  -F, --force-unmerged      Replace them even then, discarding that work
   --no-create-branch        Only checkout existing branches, don't create new ones
   --no-bindpaths            Don't configure container bind mounts
   --no-mtimes               Don't copy file mtimes from the source working trees
@@ -180,6 +186,14 @@ worktree delete [-h] [--delete-branch] [-f] [-y] [-d DATASET] target
 
 Subdatasets that are not installed (no `.git` present) are skipped. A failed subdataset does not abort the remaining ones.
 
+Only paths git reports as worktrees are replaced. A directory that merely
+happens to sit at the destination is never deleted — you get the usual
+"worktree root already exists" refusal instead.
+
+Because `-f` deletes the branch as well, the replacement starts from the main
+checkout's current state rather than inheriting the old branch's commits. That
+is what makes a replaced worktree equivalent to a brand new one.
+
 ### Containers
 
 `datalad containers-run` cannot read annexed files inside a worktree: in a worktree `.git` is a symlink into the main repository, so git-annex object symlinks resolve to paths outside the worktree directory, which a container does not see. The result is `FileNotFoundError` on every annexed input ([datalad-container#288](https://github.com/datalad/datalad-container/issues/288)).
@@ -201,10 +215,13 @@ Worse, the ordering is not merely lost but systematically inverted. `worktree ad
 
 As its final step, `worktree add` copies each file's mtime from the working tree the worktree was created from — across all datasets at once, since the ordering being repaired is the cross-dataset one. Directories get the same treatment, because Snakemake's `directory()` outputs read staleness off the directory's own mtime.
 
-Two properties keep it safe:
+Three properties keep it safe:
 
-- **Matching is on blob OID, not path.** A worktree created from a different ref only inherits mtimes for content that is byte-identical; anything that genuinely differs keeps its checkout time. Files that are modified but uncommitted in the reference are skipped for the same reason — their mtime describes content the worktree does not have.
+- **Matching is on blob OID, not path.** A worktree created from a different ref only inherits mtimes for content that is byte-identical; anything that genuinely differs keeps its checkout time. Files that are modified but uncommitted on either side are skipped for the same reason — their mtime describes content the other side does not have.
 - **Symlinks are never followed.** Annexed files are symlinks into `.git/annex/objects`, an object store *shared* with the main repository. Writing through the link would rewrite the source dataset's own (mode 444) objects, and would be a no-op for the consumer anyway: Snakemake reads the symlink's own mtime.
+- **Unlocked annexed files are skipped entirely.** git-annex can track a file unlocked — committed as a regular file whose content is a one-line `/annex/objects/…` pointer, with the real bytes in the working tree. Git's index is a *stat cache*: it records the mtime at which each path's content was last verified, and `git status` skips hashing while that still matches. Rewriting a symlink's mtime is free to re-verify, because git only re-reads the link target; rewriting an unlocked annexed file's mtime forces git to re-read and re-hash the whole file through git-annex's clean filter. Measured on one real dataset: stamping 10099 symlinks cost the next `git status` 0.11 s, while stamping 28 unlocked files totalling 3.71 GB cost it **152 s**. Under `annex.thin` it is also the one case where stamping would reach the shared object store, since an unlocked file is then a hardlink to its annex object.
+
+  The practical consequence: outputs your dataset tracks unlocked keep their checkout time rather than inheriting one. If that matters, the cause is usually a repo-global `git annex config --set annex.addunlocked <glob>`, which is inherited by every clone and does not appear in `.git/config`.
 
 Reconstructing mtimes from commit dates (the `git-restore-mtime` approach) is deliberately not used — routine history rewriting (`jj squash`, rebase) would make every file look new.
 

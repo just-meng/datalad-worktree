@@ -129,7 +129,12 @@ def build_parser():
     )
     add_p.add_argument(
         "-f", "--force", action="store_true", default=False,
-        help="pass --force to git worktree add",
+        help="replace worktrees that already exist at the destination; "
+             "refuses if any still holds unmerged work",
+    )
+    add_p.add_argument(
+        "-F", "--force-unmerged", action="store_true", default=False,
+        help="replace them even if they hold unmerged work (implies --force)",
     )
     add_p.add_argument(
         "--no-create-branch", action="store_true", default=False,
@@ -229,7 +234,8 @@ def _cmd_add(args) -> int:
             worktree_path=worktree_path,
             branch=args.branch,
             create_branch=not args.no_create_branch,
-            force=args.force,
+            force=args.force or args.force_unmerged,
+            force_unmerged=args.force_unmerged,
             dry_run=args.dry_run,
             configure_containers=not args.no_bindpaths,
             preserve_mtimes=not args.no_mtimes,
