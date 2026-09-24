@@ -10,7 +10,13 @@ from datalad_worktree.delete import (
     _git_worktree_remove,
     _resolve_target,
     delete_nested_worktrees,
+    is_main_worktree,
+    resolve_delete_targets,
 )
+import pytest
+from datalad.api import create
+from datalad.distribution.dataset import Dataset
+
 from tests.conftest import _git
 
 
@@ -200,3 +206,79 @@ class TestDeleteFallback:
         )
         # git worktree remove will fail, and the path doesn't exist for fallback
         assert err != ""
+
+
+# ── Never delete the main working tree ───────────────────────────────────────
+
+
+@pytest.fixture()
+def text2git_ds(tmp_path: Path) -> Path:
+    """
+    A dataset whose content lives in git, not the annex.
+
+    Deliberately not the annexed fixture: a `shutil.rmtree` over an annexed
+    dataset trips on mode-555 annex object directories and fails partway, so an
+    annexed dataset survived this bug by accident. A text2git dataset -- what
+    `datalad create -c text2git` and no-annex code datasets look like -- has no
+    such directories and was deleted outright.
+    """
+    ds_path = tmp_path / "code-ds"
+    create(path=str(ds_path), cfg_proc=["text2git"], result_renderer="disabled")
+    (ds_path / "precious.txt").write_text("the whole dataset\n")
+    Dataset(str(ds_path)).save(message="init", result_renderer="disabled")
+    return ds_path
+
+
+class TestMainWorktreeIsNeverDeleted:
+    def test_is_main_worktree_identifies_the_checkout(self, text2git_ds: Path):
+        assert is_main_worktree(text2git_ds, text2git_ds) is True
+        assert is_main_worktree(text2git_ds, text2git_ds / "sub") is False
+
+    def test_branch_lookup_skips_the_main_worktree(self, text2git_ds: Path):
+        """`git worktree list` reports it, so the lookup must filter it out."""
+        branch = _git(text2git_ds, "branch", "--show-current").stdout.strip()
+
+        targets, skipped = resolve_delete_targets(text2git_ds, branch)
+
+        assert targets == []
+        assert skipped and skipped[0].result == WorktreeResult.SKIPPED_NO_WORKTREE
+
+    def test_deleting_the_main_branch_leaves_the_dataset_intact(
+        self, text2git_ds: Path,
+    ):
+        """The regression: this destroyed the dataset and reported DELETED."""
+        branch = _git(text2git_ds, "branch", "--show-current").stdout.strip()
+
+        reports = list(delete_nested_worktrees(
+            superds_path=text2git_ds, target=branch,
+        ))
+
+        assert not [r for r in reports if r.result == WorktreeResult.DELETED]
+        assert (text2git_ds / "precious.txt").exists()
+        assert (text2git_ds / ".git").exists()
+
+    def test_deleting_the_main_path_is_refused(self, text2git_ds: Path):
+        reports = list(delete_nested_worktrees(
+            superds_path=text2git_ds, target=str(text2git_ds),
+        ))
+
+        assert any("main working tree" in r.message for r in reports)
+        assert (text2git_ds / "precious.txt").exists()
+
+    def test_remove_helper_refuses_it_directly(self, text2git_ds: Path):
+        """Defence in depth: the guard that makes the rmtree fallback safe."""
+        err = _git_worktree_remove(text2git_ds, text2git_ds, force=True)
+
+        assert "main working tree" in err
+        assert (text2git_ds / "precious.txt").exists()
+
+    def test_a_real_worktree_still_deletes(self, superds: dict):
+        """The guard must not block what delete is for."""
+        worktree = _create_worktrees(superds, "wt", "runs")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"], target="runs",
+        ))
+
+        assert any(r.result == WorktreeResult.DELETED for r in reports)
+        assert not worktree.exists()

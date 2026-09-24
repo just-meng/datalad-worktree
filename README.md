@@ -202,6 +202,10 @@ Shows worktrees grouped by branch. Main worktrees are listed first under the sup
 
 ### Delete
 
+The main checkout is never a target: `git worktree list` reports it alongside the
+linked worktrees, but it is the dataset rather than a worktree of it. Naming it
+by path or by its branch is reported as "not a worktree" and changes nothing.
+
 1. **Resolve** which worktrees match the target (path or branch name).
 2. **Preview** the directories that will be deleted and ask for confirmation (`--yes` to skip).
 3. **Delete** deepest-first so children are deleted before parents. Falls back to manual deletion for DataLad repos where `git worktree remove` fails.
