@@ -283,13 +283,19 @@ try:
 
         @staticmethod
         def custom_result_summary_renderer(results):
-            from datalad_worktree.list_cmd import column_width, group_by_branch
+            from datalad_worktree.list_cmd import (
+                DETACHED_LABEL,
+                annotation,
+                branch_order,
+                column_width,
+                group_by_branch,
+            )
 
             entries = (
                 (
                     res.get("dataset_path", "."),
                     res.get("path", ""),
-                    res.get("branch", "") or "(detached)",
+                    res.get("branch", "") or DETACHED_LABEL,
                     res.get("is_main", False),
                 )
                 for res in results
@@ -306,20 +312,19 @@ try:
                 header = super_branch or "(unknown)"
                 ui.message(ac.color_word(header, ac.GREEN))
                 for ds_path, wt_path, branch in main_group:
-                    annotation = ""
-                    if branch != super_branch:
-                        annotation = ac.color_word(
-                            f" ({branch})", ac.WHITE,
-                        )
+                    note = annotation(branch, super_branch)
+                    suffix = ac.color_word(note, ac.WHITE) if note else ""
                     ui.message("  {:<{}}{}{}".format(
-                        ds_path, col_width, wt_path, annotation,
+                        ds_path, col_width, wt_path, suffix,
                     ))
 
-            for branch in sorted(branch_groups):
-                ui.message(ac.color_word(branch, ac.GREEN))
-                for ds_path, wt_path in branch_groups[branch]:
-                    ui.message("  {:<{}}{}".format(
-                        ds_path, col_width, wt_path,
+            for heading in branch_order(branch_groups):
+                ui.message(ac.color_word(heading, ac.GREEN))
+                for ds_path, wt_path, branch in branch_groups[heading]:
+                    note = annotation(branch, heading)
+                    suffix = ac.color_word(note, ac.WHITE) if note else ""
+                    ui.message("  {:<{}}{}{}".format(
+                        ds_path, col_width, wt_path, suffix,
                     ))
 
         _params_ = dict(

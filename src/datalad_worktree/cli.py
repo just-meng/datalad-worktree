@@ -287,6 +287,9 @@ def _cmd_sync_mtimes(args) -> int:
 
 def _cmd_list(args) -> int:
     from datalad_worktree.list_cmd import (
+        DETACHED_LABEL,
+        annotation,
+        branch_order,
         column_width,
         group_by_branch,
         list_nested_worktrees,
@@ -312,7 +315,7 @@ def _cmd_list(args) -> int:
         (
             ds_wt.dataset_path,
             wt.path,
-            wt.branch or "(detached)",
+            wt.branch or DETACHED_LABEL,
             wt.path.resolve() == ds_wt.source.resolve(),
         )
         for ds_wt in datasets_with_extras
@@ -327,16 +330,17 @@ def _cmd_list(args) -> int:
         header = super_branch or "(unknown)"
         print(f"{C.GREEN}{header}{C.NC}")
         for ds_path, wt_path, branch in main_group:
-            annotation = ""
-            if branch != super_branch:
-                annotation = f" {C.DIM}({branch}){C.NC}"
-            print(f"  {ds_path:<{col_width}}{wt_path}{annotation}")
+            note = annotation(branch, super_branch)
+            suffix = f"{C.DIM}{note}{C.NC}" if note else ""
+            print(f"  {ds_path:<{col_width}}{wt_path}{suffix}")
 
     # Print extra branch groups
-    for branch in sorted(branch_groups):
-        print(f"{C.GREEN}{branch}{C.NC}")
-        for ds_path, wt_path in branch_groups[branch]:
-            print(f"  {ds_path:<{col_width}}{wt_path}")
+    for heading in branch_order(branch_groups):
+        print(f"{C.GREEN}{heading}{C.NC}")
+        for ds_path, wt_path, branch in branch_groups[heading]:
+            note = annotation(branch, heading)
+            suffix = f"{C.DIM}{note}{C.NC}" if note else ""
+            print(f"  {ds_path:<{col_width}}{wt_path}{suffix}")
 
     return 0
 
