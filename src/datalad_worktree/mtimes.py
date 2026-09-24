@@ -12,7 +12,7 @@ exactly the "all your code changed" signal.
 This module copies each file's mtime from the working tree the worktree was
 created from, as the final step of ``worktree add``.
 
-Two properties keep it safe:
+Three properties keep it safe:
 
 - Paths are matched on **blob OID**, not on name. A worktree created from a
   different ref only inherits mtimes for content that is byte-identical;
@@ -23,6 +23,10 @@ Two properties keep it safe:
   the main repository -- the same inode. Writing through the link would
   mutate the source dataset's (mode 444) annex objects, and would be a no-op
   for the consumer anyway: Snakemake reads the symlink's own mtime.
+- **Unlocked** annexed files are skipped entirely; see
+  ``unlocked_annex_paths``. Stamping them is what makes git re-hash gigabytes
+  on the next ``git status``, and under ``annex.thin`` it reaches the shared
+  object store that the point above is careful to protect.
 
 Reconstructing mtimes from commit dates (the ``git-restore-mtime`` approach)
 is deliberately not used: these repositories are routinely rewritten by
@@ -55,6 +59,15 @@ logger = logging.getLogger(__name__)
 # it is not a file in this worktree, it is where another one is mounted.
 BLOB_MODES = frozenset({"100644", "100755", "120000"})
 
+# Modes that are a real file rather than a symlink -- the only ones that can
+# be an unlocked annexed file.
+_FILE_MODES = frozenset({"100644", "100755"})
+
+# An annex pointer file is one short line, so the blob size from `ls-tree -l`
+# rules almost every blob out without reading any content.
+_POINTER_PREFIX = b"/annex/objects/"
+_POINTER_MAX_BYTES = 1024
+
 # `status --porcelain` index codes that carry a second, NUL-separated path.
 _TWO_PATH_CODES = frozenset({"R", "C"})
 
@@ -68,6 +81,35 @@ def _git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _tracked_entries(repo_path: Path) -> list[tuple[str, str, int, str]]:
+    """
+    ``(mode, oid, size, path)`` for every tracked blob at HEAD.
+
+    ``-l`` adds the blob size, which is what lets the annex-pointer check
+    below reject almost everything without reading any content.
+    """
+    result = _git(repo_path, "ls-tree", "-r", "-l", "-z", "HEAD")
+    if result.returncode != 0:
+        logger.debug("ls-tree failed in %s: %s", repo_path, result.stderr.strip())
+        return []
+
+    entries: list[tuple[str, str, int, str]] = []
+    for record in result.stdout.split("\0"):
+        if not record:
+            continue
+        # "<mode> SP <type> SP <oid> SP <size> TAB <path>"; -z leaves paths
+        # unquoted, and <size> is space-padded (and "-" for a gitlink).
+        meta, _, path = record.partition("\t")
+        fields = meta.split()
+        if len(fields) != 4:
+            continue
+        mode, _type, oid, raw_size = fields
+        if mode not in BLOB_MODES:
+            continue
+        entries.append((mode, oid, int(raw_size) if raw_size.isdigit() else 0, path))
+    return entries
+
+
 def tracked_blobs(repo_path: Path) -> dict[str, str]:
     """
     Map tracked path -> blob OID at HEAD, for one working tree.
@@ -75,22 +117,88 @@ def tracked_blobs(repo_path: Path) -> dict[str, str]:
     Submodule gitlinks are dropped; everything left is a regular file, an
     executable, or a symlink -- all of which have an mtime of their own.
     """
-    result = _git(repo_path, "ls-tree", "-r", "-z", "HEAD")
-    if result.returncode != 0:
-        logger.debug("ls-tree failed in %s: %s", repo_path, result.stderr.strip())
+    return {path: oid for _mode, oid, _size, path in _tracked_entries(repo_path)}
+
+
+def _blob_heads(repo_path: Path, oids: list[str]) -> dict[str, bytes]:
+    """
+    First bytes of each blob, in one ``cat-file --batch`` call.
+
+    Only enough bytes to recognise a pointer are kept, so the result stays
+    small no matter how many candidates are passed in.
+    """
+    if not oids:
         return {}
 
-    blobs: dict[str, str] = {}
-    for record in result.stdout.split("\0"):
-        if not record:
+    proc = subprocess.run(
+        ["git", "-C", str(repo_path), "cat-file", "--batch"],
+        input=("\n".join(oids) + "\n").encode(),
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        logger.debug("cat-file --batch failed in %s", repo_path)
+        return {}
+
+    out = proc.stdout
+    heads: dict[str, bytes] = {}
+    pos = 0
+    for oid in oids:
+        newline = out.find(b"\n", pos)
+        if newline == -1:
+            break
+        header = out[pos:newline].split()
+        if len(header) != 3:
+            # "<oid> missing" -- no content follows, so only the line is used.
+            pos = newline + 1
             continue
-        # "<mode> SP <type> SP <oid> TAB <path>"; -z leaves paths unquoted.
-        meta, _, path = record.partition("\t")
-        mode, _, rest = meta.partition(" ")
-        if mode not in BLOB_MODES:
-            continue
-        blobs[path] = rest.rpartition(" ")[2]
-    return blobs
+        start = newline + 1
+        heads[oid] = out[start:start + len(_POINTER_PREFIX)]
+        pos = start + int(header[2]) + 1  # content, then its trailing newline
+    return heads
+
+
+def _unlocked_from_entries(
+    repo_path: Path,
+    entries: list[tuple[str, str, int, str]],
+) -> set[str]:
+    """``unlocked_annex_paths`` given an already-read entry list."""
+    candidates = [
+        (oid, path)
+        for mode, oid, size, path in entries
+        if mode in _FILE_MODES and 0 < size <= _POINTER_MAX_BYTES
+    ]
+    heads = _blob_heads(repo_path, [oid for oid, _ in candidates])
+    return {
+        path for oid, path in candidates
+        if heads.get(oid, b"").startswith(_POINTER_PREFIX)
+    }
+
+
+def unlocked_annex_paths(repo_path: Path) -> set[str]:
+    """
+    Tracked paths that are *unlocked* annexed files.
+
+    git-annex tracks a file either locked -- a symlink into
+    ``.git/annex/objects`` -- or unlocked, committed as a regular file whose
+    blob is a one-line pointer while the working tree holds the content.
+
+    Their mtimes must not be copied, for two independent reasons.
+
+    Git's index is a stat cache: each entry records the mtime at which the
+    content was last verified, and ``git status`` skips hashing while that
+    still matches. Re-stamping a *symlink* is free to re-verify, because git
+    only re-reads the link target. Re-stamping an unlocked annexed file
+    invalidates its entry, so git must re-read and re-hash the whole file
+    through git-annex's clean filter. Measured on one real dataset: stamping
+    10099 symlinks cost the next ``git status`` 0.11 s, while stamping 28
+    unlocked files totalling 3.71 GB cost it 152 s.
+
+    It is also the one case where stamping can reach the shared annex object
+    store. Under ``annex.thin`` an unlocked file *is* a hardlink to its annex
+    object, so ``os.utime`` would move the object's own mtime -- precisely
+    what ``follow_symlinks=False`` protects against for locked files.
+    """
+    return _unlocked_from_entries(repo_path, _tracked_entries(repo_path))
 
 
 def dirty_paths(repo_path: Path) -> set[str]:
@@ -131,18 +239,24 @@ def transferable_paths(reference: Path, worktree: Path) -> list[str]:
     Paths whose mtime can be carried from ``reference`` to ``worktree``.
 
     A path qualifies when it is tracked in both, holds the identical blob in
-    both, and is clean in the reference working tree.
+    both, is clean in the reference working tree, and is not an unlocked
+    annexed file.
     """
-    ref_blobs = tracked_blobs(reference)
-    if not ref_blobs:
+    ref_entries = _tracked_entries(reference)
+    if not ref_entries:
         return []
 
+    ref_blobs = {path: oid for _mode, oid, _size, path in ref_entries}
     wt_blobs = tracked_blobs(worktree)
     dirty = dirty_paths(reference)
+    # Same blob on both sides, so the reference's lock state is the worktree's.
+    unlocked = _unlocked_from_entries(reference, ref_entries)
 
     return sorted(
         path for path, oid in ref_blobs.items()
-        if path not in dirty and wt_blobs.get(path) == oid
+        if path not in dirty
+        and path not in unlocked
+        and wt_blobs.get(path) == oid
     )
 
 

@@ -22,6 +22,7 @@ from datalad_worktree.mtimes import (
     sync_nested_mtimes,
     tracked_blobs,
     transferable_paths,
+    unlocked_annex_paths,
 )
 
 # Two fixed, well-separated timestamps. The "output" is deliberately newer
@@ -40,6 +41,21 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
 
 def _set_mtime(path: Path, mtime_ns: int) -> None:
     os.utime(path, ns=(mtime_ns, mtime_ns), follow_symlinks=False)
+
+
+def _commit_unlocked(ds_path: Path, rel: str) -> None:
+    """
+    Re-commit ``rel`` as an *unlocked* annexed file.
+
+    ``git add`` (rather than ``git annex add`` or ``datalad save``, both of
+    which re-lock) sends the content through git-annex's clean filter, which
+    stores it in the annex and leaves a pointer blob in the tree. That is how
+    unlocked files arise in practice -- the other way being a repo-global
+    ``git annex config --set annex.addunlocked <glob>``.
+    """
+    _git(ds_path, "annex", "unlock", rel)
+    _git(ds_path, "add", rel)
+    _git(ds_path, "commit", "-qm", f"unlock {rel}")
 
 
 @pytest.fixture()
@@ -137,6 +153,76 @@ class TestDirtyPaths:
         _git(pipeline_ds["super"], "mv", "out.txt", "renamed.txt")
         dirty = dirty_paths(pipeline_ds["super"])
         assert {"out.txt", "renamed.txt"} <= dirty
+
+
+class TestUnlockedAnnexFiles:
+    """
+    Unlocked annexed files must never be stamped.
+
+    Stamping one invalidates its index stat-cache entry, so the next
+    ``git status`` re-hashes the whole file through git-annex's clean filter.
+    On the dataset this was found on, that was 152 s for 3.71 GB -- against
+    0.11 s for the 10099 locked symlinks beside them.
+    """
+
+    def test_detects_a_pointer_blob(self, tmp_path: Path):
+        """A pointer blob is recognised without git-annex being involved."""
+        repo = tmp_path / "plain"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "pointer.pkl").write_text(
+            "/annex/objects/MD5E-s289878220--9959612438e19297b29e640ccff2dc61.pkl\n"
+        )
+        (repo / "plain.txt").write_text("just text\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "one pointer, one plain file")
+
+        assert unlocked_annex_paths(repo) == {"pointer.pkl"}
+
+    def test_locked_symlinks_are_not_reported(self, pipeline_ds: dict):
+        """The fixture's annexed files are locked, so none should match."""
+        assert unlocked_annex_paths(pipeline_ds["super"]) == set()
+
+    def test_detects_a_really_unlocked_file(self, pipeline_ds: dict):
+        _commit_unlocked(pipeline_ds["super"], "out.txt")
+
+        assert "out.txt" in unlocked_annex_paths(pipeline_ds["super"])
+
+    def test_transferable_paths_excludes_it(self, pipeline_ds: dict):
+        _commit_unlocked(pipeline_ds["super"], "out.txt")
+        worktree = _add(pipeline_ds, "wt", "feat/unlocked", preserve_mtimes=False)
+
+        paths = transferable_paths(pipeline_ds["super"], worktree)
+
+        assert "out.txt" not in paths
+        # The locked sibling is still carried, so this is not a blanket skip.
+        assert "results/table.csv" in paths
+
+    def test_copy_mtimes_leaves_the_unlocked_file_alone(self, pipeline_ds: dict):
+        """
+        The regression: the unlocked file keeps whatever the checkout gave it,
+        while its locked sibling is still stamped.
+
+        Asserting on "the two sides differ" would not work -- git-annex
+        materialises an unlocked file with the source's mtime anyway -- so the
+        reference gets a distinctive mtime and the worktree is checked against
+        the value it had *before* the copy.
+        """
+        _commit_unlocked(pipeline_ds["super"], "out.txt")
+        reference = pipeline_ds["super"]
+        worktree = _add(pipeline_ds, "wt", "feat/unlocked", preserve_mtimes=False)
+
+        _set_mtime(reference / "out.txt", SCRIPT_MTIME_NS)
+        _set_mtime(reference / "results" / "table.csv", SCRIPT_MTIME_NS)
+        unstamped = os.lstat(worktree / "out.txt").st_mtime_ns
+
+        copy_mtimes(reference, worktree)
+
+        assert os.lstat(worktree / "out.txt").st_mtime_ns == unstamped
+        assert os.lstat(worktree / "results" / "table.csv").st_mtime_ns == \
+            SCRIPT_MTIME_NS
 
 
 class TestParentDirs:
