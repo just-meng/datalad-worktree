@@ -11,14 +11,14 @@ from datalad_worktree.core import WorktreeReport, WorktreeResult
 class TestBuildParser:
     def test_add_required_args(self):
         parser = build_parser()
-        args = parser.parse_args(["add", "/tmp/wt/my-feature", "main"])
+        args = parser.parse_args(["add", "main", "/tmp/wt/my-feature"])
         assert args.command == "add"
         assert str(args.worktree_path) == "/tmp/wt/my-feature"
         assert args.branch == "main"
 
     def test_add_flags_default_false(self):
         parser = build_parser()
-        args = parser.parse_args(["add", "/tmp/wt", "b"])
+        args = parser.parse_args(["add", "b", "/tmp/wt"])
         assert args.dry_run is False
         assert args.force is False
         assert args.no_create_branch is False
@@ -30,7 +30,7 @@ class TestBuildParser:
             "add", "-n", "-f",
             "--no-create-branch",
             "-d", "/data/ds",
-            "/tmp/wt", "b",
+            "b", "/tmp/wt",
         ])
         assert args.dry_run is True
         assert args.force is True
@@ -152,7 +152,7 @@ class TestMainCLI:
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "bare-test"), "feat/bare",
+            "feat/bare", str(superds["wt_location"] / "bare-test"),
         ])
         capsys.readouterr()
 
@@ -167,7 +167,7 @@ class TestMainCLI:
             "--no-color", "add",
             "--dry-run",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "test-cli"), "feat/cli",
+            "feat/cli", str(superds["wt_location"] / "test-cli"),
         ])
         assert exit_code == 0
 
@@ -175,7 +175,7 @@ class TestMainCLI:
         exit_code = main([
             "--no-color", "add",
             "-d", str(tmp_path),
-            str(tmp_path / "wt"), "b",
+            "b", str(tmp_path / "wt"),
         ])
         assert exit_code == 1
 
@@ -183,7 +183,7 @@ class TestMainCLI:
         exit_code = main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "cli-full"), "feat/cli-full",
+            "feat/cli-full", str(superds["wt_location"] / "cli-full"),
         ])
         assert exit_code == 0
         wt = superds["wt_location"] / "cli-full"
@@ -204,7 +204,7 @@ class TestMainCLI:
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "rm-test"), "feat/rm-test",
+            "feat/rm-test", str(superds["wt_location"] / "rm-test"),
         ])
         # Then delete them
         exit_code = main([
@@ -220,7 +220,7 @@ class TestMainCLI:
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            str(wt_path), "feat/rm-path",
+            "feat/rm-path", str(wt_path),
         ])
         exit_code = main([
             "--no-color", "delete", "--yes",
@@ -238,7 +238,7 @@ class TestCLISummaryOutput:
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "sum-test"), "feat/sum",
+            "feat/sum", str(superds["wt_location"] / "sum-test"),
         ])
         add_out = capsys.readouterr().out
         assert "4 created" in add_out
@@ -256,7 +256,7 @@ class TestCLISummaryOutput:
             "--no-color", "add",
             "--dry-run",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "sum-dry"), "feat/sum-dry",
+            "feat/sum-dry", str(superds["wt_location"] / "sum-dry"),
         ])
         out = capsys.readouterr().out
         assert "4 would be created" in out
@@ -274,7 +274,7 @@ class TestCLISummaryOutput:
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "sum-skip"), "feat/sum-skip",
+            "feat/sum-skip", str(superds["wt_location"] / "sum-skip"),
         ])
         out = capsys.readouterr().out
         assert "skipped" in out
@@ -298,7 +298,7 @@ class TestDeleteConfirmation:
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "confirm-test"), "feat/confirm",
+            "feat/confirm", str(superds["wt_location"] / "confirm-test"),
         ])
         capsys.readouterr()
 
@@ -321,7 +321,7 @@ class TestDeleteConfirmation:
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "confirm-y"), "feat/confirm-y",
+            "feat/confirm-y", str(superds["wt_location"] / "confirm-y"),
         ])
         capsys.readouterr()
 
@@ -339,7 +339,7 @@ class TestDeleteConfirmation:
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "confirm-eof"), "feat/confirm-eof",
+            "feat/confirm-eof", str(superds["wt_location"] / "confirm-eof"),
         ])
 
         def raise_eof(_):
@@ -359,7 +359,7 @@ class TestDeleteConfirmation:
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            str(superds["wt_location"] / "confirm-br"), "feat/confirm-br",
+            "feat/confirm-br", str(superds["wt_location"] / "confirm-br"),
         ])
         capsys.readouterr()
 

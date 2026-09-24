@@ -1,5 +1,6 @@
 """
-DataLad command interfaces for worktree-add, worktree-list, worktree-delete.
+DataLad command interfaces for worktree-add, worktree-list, worktree-delete
+and worktree-sync-mtimes.
 
 Requires DataLad to be installed.
 """
@@ -38,10 +39,10 @@ try:
         Examples::
 
             # Create worktrees under /tmp/wt on branch 'feature/x'
-            datalad worktree-add /tmp/wt feature/x
+            datalad worktree-add feature/x /tmp/wt
 
             # Dry run
-            datalad worktree-add --dry-run /tmp/wt dev/experiment
+            datalad worktree-add --dry-run dev/experiment /tmp/wt
         """
 
         @staticmethod
@@ -57,13 +58,18 @@ try:
 
             if res.get("container_config"):
                 ui.message("{} {} ({})".format(
-                    ac.color_word("config", ac.GREEN),
+                    ac.color_word("config", ac.CYAN),
+                    label, res.get("message", ""),
+                ))
+            elif res.get("mtimes"):
+                ui.message("{} {} ({})".format(
+                    ac.color_word("mtimes", ac.CYAN),
                     label, res.get("message", ""),
                 ))
             elif status == "ok":
                 extra = ""
                 if res.get("new_branch"):
-                    extra = ac.color_word(" (new branch)", ac.YELLOW)
+                    extra = " (new branch)"
                 ui.message("{} {} -> {}{}".format(
                     ac.color_word("create", ac.GREEN),
                     label, dest, extra,
@@ -100,7 +106,7 @@ try:
                     worktree_root = res["worktree_root"]
                 if res.get("dry_run"):
                     is_dry_run = True
-                if res.get("container"):
+                if res.get("container") or res.get("mtimes"):
                     continue  # not a worktree, don't count it as one
                 if res.get("status") == "ok":
                     created += 1
@@ -120,14 +126,14 @@ try:
                 ui.message(f"{', '.join(parts)} at {worktree_root}")
 
         _params_ = dict(
-            worktree_path=Parameter(
-                args=("worktree_path",),
-                doc="Full path for the superdataset worktree",
-                constraints=EnsureStr(),
-            ),
             branch=Parameter(
                 args=("branch",),
                 doc="Branch name to create/checkout in every worktree",
+                constraints=EnsureStr(),
+            ),
+            worktree_path=Parameter(
+                args=("worktree_path",),
+                doc="Full path for the superdataset worktree",
                 constraints=EnsureStr(),
             ),
             dataset=Parameter(
@@ -160,18 +166,26 @@ try:
                 action="store_true",
                 default=False,
             ),
+            no_mtimes=Parameter(
+                args=("--no-mtimes",),
+                doc="""Don't copy file mtimes from the source working
+                trees into the created worktrees""",
+                action="store_true",
+                default=False,
+            ),
         )
 
         @staticmethod
         @eval_results
         def __call__(
-            worktree_path,
             branch,
+            worktree_path,
             dataset=None,
             no_create_branch=False,
             force=False,
             dry_run=False,
             no_bindpaths=False,
+            no_mtimes=False,
         ):
             from datalad.distribution.dataset import require_dataset
 
@@ -195,6 +209,7 @@ try:
                 force=force,
                 dry_run=dry_run,
                 configure_containers=not no_bindpaths,
+                preserve_mtimes=not no_mtimes,
             ):
                 if report.result == WorktreeResult.STARTING:
                     # Progress indicator — render directly, don't yield
@@ -206,6 +221,7 @@ try:
                     WorktreeResult.CREATED,
                     WorktreeResult.CREATED_NEW_BRANCH,
                     WorktreeResult.CONFIGURED,
+                    WorktreeResult.MTIMES_SYNCED,
                 ):
                     status = "ok"
                 elif report.result in SKIPPED_RESULTS:
@@ -234,6 +250,7 @@ try:
                     skip_reason=skip_reason,
                     dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
                     container_config=report.result == WorktreeResult.CONFIGURED,
+                    mtimes=report.result == WorktreeResult.MTIMES_SYNCED,
                     container=report.result in (
                         WorktreeResult.CONFIGURED,
                         WorktreeResult.SKIPPED_CONTAINER,
@@ -486,6 +503,124 @@ try:
                     type="dataset",
                 )
 
+    # ── worktree-sync-mtimes ─────────────────────────────────────────────
+
+    @build_doc
+    class WorktreeSyncMtimes(Interface):
+        """Copy file mtimes from the main working trees into a worktree.
+
+        ``worktree-add`` does this once at creation. Anything that rewrites
+        files afterwards -- ``datalad get``, a merge, a ``git checkout`` --
+        gives them fresh mtimes again, which makes a make-style pipeline
+        (Snakemake, Make, redo) rerun work that is already done. This
+        restores them.
+
+        Only content that is byte-identical in both trees is touched, so a
+        file that genuinely differs keeps its own timestamp.
+
+        Examples::
+
+            # Sync the worktree on branch 'runs', from the superdataset
+            datalad worktree-sync-mtimes runs
+
+            # Sync the worktree in the current directory
+            datalad worktree-sync-mtimes
+
+            # Name both sides explicitly
+            datalad worktree-sync-mtimes --from /data/super /tmp/wt
+        """
+
+        @staticmethod
+        def custom_result_renderer(res, **kwargs):
+            if res["action"] != "worktree-sync-mtimes":
+                default_result_renderer(res)
+                return
+
+            label = res.get("dataset_path", "") or "."
+            if res.get("status") == "ok":
+                ui.message("{} {} ({})".format(
+                    ac.color_word("mtimes", ac.CYAN),
+                    label, res.get("message", ""),
+                ))
+            elif res.get("status") == "notneeded":
+                ui.message("{}   {} ({})".format(
+                    ac.color_word("skip", ac.YELLOW),
+                    label, res.get("message", ""),
+                ))
+            else:
+                ui.message("{} {}: {}".format(
+                    ac.color_word("error", ac.RED),
+                    label, res.get("message", ""),
+                ))
+
+        @staticmethod
+        def custom_result_summary_renderer(results):
+            synced = sum(
+                1 for res in results
+                if res.get("action") == "worktree-sync-mtimes"
+                and res.get("status") == "ok"
+            )
+            ui.message(f"{synced} datasets synced")
+
+        _params_ = dict(
+            target=Parameter(
+                args=("target",),
+                nargs="?",
+                doc="""Worktree path or branch name (default: current
+                directory)""",
+                constraints=EnsureStr() | EnsureNone(),
+            ),
+            dataset=Parameter(
+                args=("-d", "--dataset"),
+                doc="""Dataset to resolve a branch name against (default:
+                current directory)""",
+                constraints=EnsureStr() | EnsureNone(),
+            ),
+            reference=Parameter(
+                args=("--from",),
+                dest="reference",
+                doc="""Reference working tree to copy from (default: the
+                main working tree this worktree was created from)""",
+                constraints=EnsureStr() | EnsureNone(),
+            ),
+        )
+
+        @staticmethod
+        @eval_results
+        def __call__(target=None, dataset=None, reference=None):
+            from datalad_worktree.core import SKIPPED_RESULTS, WorktreeResult
+            from datalad_worktree.mtimes import (
+                resolve_worktree_target,
+                sync_nested_mtimes,
+            )
+
+            root = resolve_worktree_target(
+                target=target,
+                dataset=Path(dataset) if dataset else None,
+            )
+
+            for report in sync_nested_mtimes(
+                worktree_path=root,
+                reference=Path(reference) if reference else None,
+            ):
+                if report.result == WorktreeResult.MTIMES_SYNCED:
+                    status = "ok"
+                elif report.result in SKIPPED_RESULTS:
+                    status = "notneeded"
+                else:
+                    status = "error"
+
+                yield get_status_dict(
+                    action="worktree-sync-mtimes",
+                    path=str(report.destination),
+                    status=status,
+                    message=report.message,
+                    source=str(report.source),
+                    dataset_path=report.dataset_path,
+                    branch=report.branch,
+                    type="dataset",
+                )
+
 except ImportError:
     logger.debug(
         "DataLad not available; datalad worktree commands not registered"
@@ -506,6 +641,13 @@ except ImportError:
             )
 
     class WorktreeDelete:
+        """Placeholder when DataLad is not installed."""
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError(
+                "DataLad is not installed. Use the standalone CLI: worktree"
+            )
+
+    class WorktreeSyncMtimes:
         """Placeholder when DataLad is not installed."""
         def __call__(self, *args, **kwargs):
             raise RuntimeError(

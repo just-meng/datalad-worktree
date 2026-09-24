@@ -35,7 +35,7 @@ uv run --project ~/path/to/datalad-worktree datalad worktree-list
 cd /data/my-superdataset
 
 # Create nested worktrees
-worktree add /tmp/worktrees/my-feature my-feature
+worktree add my-feature /tmp/worktrees/my-feature
 
 # List all worktrees across the hierarchy (also the default with no subcommand)
 worktree list
@@ -65,14 +65,19 @@ All commands are run from the superdataset root (or pass `-d <path>` to specify 
 
 ```bash
 # Create worktrees
-worktree add <worktree-path> <branch>
-worktree add --dry-run /tmp/wt experiment
-worktree add --force /tmp/wt my-feature
-worktree add --no-create-branch /tmp/wt v1.0
+worktree add <branch> <worktree-path>
+worktree add --dry-run experiment /tmp/wt
+worktree add --force my-feature /tmp/wt
+worktree add --no-create-branch v1.0 /tmp/wt
 
 # List worktrees (grouped by branch); also the default with no subcommand
 worktree list
 worktree
+
+# Restore file mtimes in an existing worktree (after a get, merge, or checkout)
+worktree sync-mtimes my-feature          # by branch name
+worktree sync-mtimes /tmp/wt             # by path
+worktree sync-mtimes                     # the worktree you are standing in
 
 # Delete worktrees (prompts for confirmation)
 worktree delete my-feature
@@ -87,9 +92,10 @@ worktree delete --force --delete-branch my-feature
 If DataLad is installed, the tool registers as a DataLad extension:
 
 ```bash
-datalad worktree-add /tmp/wt my-feature
+datalad worktree-add my-feature /tmp/wt
 datalad worktree-list
 datalad worktree-delete my-feature
+datalad worktree-sync-mtimes
 ```
 
 ## CLI Reference
@@ -97,13 +103,14 @@ datalad worktree-delete my-feature
 ### `worktree add`
 
 ```
-worktree add [-h] [-n] [-f] [--no-create-branch] [--no-bindpaths] [-d DATASET]
-             worktree_path branch
+worktree add [-h] [-n] [-f] [--no-create-branch] [--no-bindpaths] [--no-mtimes]
+             [-d DATASET] branch worktree_path
 
   -n, --dry-run             Show what would be done without doing it
   -f, --force               Pass --force to git worktree add
   --no-create-branch        Only checkout existing branches, don't create new ones
   --no-bindpaths            Don't configure container bind mounts
+  --no-mtimes               Don't copy file mtimes from the source working trees
 ```
 
 ### `worktree list`
@@ -113,6 +120,18 @@ worktree list [-h] [-d DATASET]
 ```
 
 Also the default when no subcommand is given (`worktree` alone).
+
+### `worktree sync-mtimes`
+
+```
+worktree sync-mtimes [-h] [--from REFERENCE] [-d DATASET] [target]
+
+  --from REFERENCE          Working tree to copy from (default: the one this
+                            worktree was created from)
+  -d, --dataset DATASET     Dataset to resolve a branch name against
+```
+
+`target` is a worktree path **or** a branch name, resolved the same way `worktree delete` resolves its target. It defaults to the current directory.
 
 ### `worktree delete`
 
@@ -131,6 +150,7 @@ worktree delete [-h] [--delete-branch] [-f] [-y] [-d DATASET] target
 1. **Discover** all subdatasets by recursively parsing `.gitmodules` files.
 2. **Pre-flight check**: verify all worktrees can be created (no branch conflicts, no existing paths without `--force`). If any would fail, abort before creating anything.
 3. **Create worktrees** for the superdataset and each subdataset, with real-time progress.
+4. **Configure containers** and **copy mtimes** across every worktree just created (see below).
 
 Subdatasets that are not installed (no `.git` present) are skipped. A failed subdataset does not abort the remaining ones.
 
@@ -146,6 +166,35 @@ Subdatasets that are not installed (no `.git` present) are skipped. A failed sub
 It also commits one line to the tracked `.datalad/config`, on the worktree branch: an empty `datalad.run.substitutions.bindpaths`. `run` records commands with substitutions unexpanded, so without that fallback a run record made in a worktree cannot be rerun anywhere else.
 
 Containers whose `cmdexec` has no `{img}` to anchor the insertion are skipped with a warning, as are containers registered without a `cmdexec` at all. Pass `--no-bindpaths` to skip the whole step.
+
+### Mtimes
+
+Git records content, not timestamps, so every file in a fresh worktree gets the time it was checked out. For a make-style pipeline (Snakemake, Make, redo) the mtime *ordering* between inputs and outputs **is** the up-to-date state, so a new worktree looks arbitrarily stale and reruns work that is already done.
+
+Worse, the ordering is not merely lost but systematically inverted. `worktree add` checks the superdataset out first and each subdataset after, so every file in a `code/` subdataset ends up newer than every output derived from it — exactly the "all your code changed" signal. (Same root cause as [this DataLad blog post](https://blog.datalad.org/posts/snakemake-datalad-worktree/), whose advice is to keep all pipeline steps in one worktree; this removes the need for that rule at creation time.)
+
+As its final step, `worktree add` copies each file's mtime from the working tree the worktree was created from — across all datasets at once, since the ordering being repaired is the cross-dataset one. Directories get the same treatment, because Snakemake's `directory()` outputs read staleness off the directory's own mtime.
+
+Two properties keep it safe:
+
+- **Matching is on blob OID, not path.** A worktree created from a different ref only inherits mtimes for content that is byte-identical; anything that genuinely differs keeps its checkout time. Files that are modified but uncommitted in the reference are skipped for the same reason — their mtime describes content the worktree does not have.
+- **Symlinks are never followed.** Annexed files are symlinks into `.git/annex/objects`, an object store *shared* with the main repository. Writing through the link would rewrite the source dataset's own (mode 444) objects, and would be a no-op for the consumer anyway: Snakemake reads the symlink's own mtime.
+
+Reconstructing mtimes from commit dates (the `git-restore-mtime` approach) is deliberately not used — routine history rewriting (`jj squash`, rebase) would make every file look new.
+
+Pass `--no-mtimes` to skip the step. To put mtimes back after something rewrites files in an existing worktree — a `datalad get`, a merge, a `git checkout` — run `worktree sync-mtimes <branch>` from the superdataset, or `worktree sync-mtimes` from inside the worktree itself.
+
+To check the effect on a Snakemake pipeline, diff the dry runs:
+
+```bash
+SMK="snakemake -s code/Snakefile -c 1 -k -n"
+$SMK | sed -n '/^job/,/^total/p' > /tmp/main.jobs
+worktree add runs /mnt/Data/worktrees/2p-runs
+(cd /mnt/Data/worktrees/2p-runs && $SMK | sed -n '/^job/,/^total/p') > /tmp/wt.jobs
+diff /tmp/main.jobs /tmp/wt.jobs && echo "PASS: worktree inherits main's staleness"
+```
+
+A non-empty diff *only* for rules whose staleness comes from a `params`/`code`/`software-env` rerun trigger is expected: those are recorded in the untracked `.snakemake/metadata`, which is not a worktree's concern and is not copied.
 
 ### List
 

@@ -2,9 +2,10 @@
 Command-line interface for datalad-worktree.
 
 Can be invoked as:
-  - ``worktree add <worktree-path> <branch>``
+  - ``worktree add <branch> <worktree-path>``
   - ``worktree`` or ``worktree list``
   - ``worktree delete <path-or-branch>``
+  - ``worktree sync-mtimes [path-or-branch]``
   - ``python -m datalad_worktree ...``
 """
 
@@ -19,15 +20,20 @@ from datalad_worktree.core import WorktreeReport, WorktreeResult
 
 
 class _Colors:
+    # Green for what changed the worktree tree itself (create, delete),
+    # cyan for the bookkeeping steps that follow (config, mtimes), yellow
+    # for skips. None of them are bold: "1;" is the bold attribute, and
+    # emphasising a skip over a creation gets the hierarchy backwards.
     RED = "\033[0;31m"
     GREEN = "\033[0;32m"
-    YELLOW = "\033[1;33m"
+    YELLOW = "\033[0;33m"
+    CYAN = "\033[0;36m"
     DIM = "\033[2m"
     NC = "\033[0m"
 
     @classmethod
     def disable(cls):
-        cls.RED = cls.GREEN = cls.YELLOW = cls.DIM = cls.NC = ""
+        cls.RED = cls.GREEN = cls.YELLOW = cls.CYAN = cls.DIM = cls.NC = ""
 
 
 C = _Colors
@@ -55,7 +61,7 @@ def _render_report(report: WorktreeReport) -> None:
     elif report.result == WorktreeResult.CREATED_NEW_BRANCH:
         if is_tty:
             print("\033[2K", end="")
-        print(f"{C.GREEN}create{C.NC} {label} -> {dest} {C.YELLOW}(new branch){C.NC}")
+        print(f"{C.GREEN}create{C.NC} {label} -> {dest} {C.DIM}(new branch){C.NC}")
     elif report.result == WorktreeResult.SKIPPED_DRY_RUN:
         print(f"{C.GREEN}create{C.NC} {C.DIM}[DRY-RUN]{C.NC} {label} -> {dest}")
     elif report.result in (
@@ -66,7 +72,9 @@ def _render_report(report: WorktreeReport) -> None:
     ):
         print(f"{C.YELLOW}skip{C.NC}   {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.CONFIGURED:
-        print(f"{C.GREEN}config{C.NC} {label} {C.DIM}({report.message}){C.NC}")
+        print(f"{C.CYAN}config{C.NC} {label} {C.DIM}({report.message}){C.NC}")
+    elif report.result == WorktreeResult.MTIMES_SYNCED:
+        print(f"{C.CYAN}mtimes{C.NC} {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.DELETED:
         print(f"{C.GREEN}delete{C.NC} {label} -> {dest}")
     elif report.result == WorktreeResult.DELETED_BRANCH:
@@ -102,12 +110,12 @@ def build_parser():
         help="create nested worktrees for all datasets",
     )
     add_p.add_argument(
-        "worktree_path", type=Path,
-        help="path for the superdataset worktree",
-    )
-    add_p.add_argument(
         "branch",
         help="branch name to create/checkout in every worktree",
+    )
+    add_p.add_argument(
+        "worktree_path", type=Path,
+        help="path for the superdataset worktree",
     )
     add_p.add_argument(
         "-n", "--dry-run", action="store_true", default=False,
@@ -126,6 +134,10 @@ def build_parser():
         help="don't configure container bind mounts for datalad containers-run",
     )
     add_p.add_argument(
+        "--no-mtimes", action="store_true", default=False,
+        help="don't copy file mtimes from the source working trees",
+    )
+    add_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
         help="path to the superdataset root (default: current directory)",
     )
@@ -136,6 +148,25 @@ def build_parser():
         help="list all worktrees for all datasets in the hierarchy",
     )
     list_p.add_argument(
+        "-d", "--dataset", type=Path, default=None,
+        help="path to the superdataset root (default: current directory)",
+    )
+
+    # ── sync-mtimes ──────────────────────────────────────────────────────
+    sync_p = sub.add_parser(
+        "sync-mtimes",
+        help="copy file mtimes from the main working trees into a worktree",
+    )
+    # Target is a path or a branch name, resolved the same way delete does.
+    sync_p.add_argument(
+        "target", nargs="?", default=None,
+        help="worktree path or branch name (default: current directory)",
+    )
+    sync_p.add_argument(
+        "--from", dest="reference", type=Path, default=None,
+        help="reference working tree (default: the one this worktree came from)",
+    )
+    sync_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
         help="path to the superdataset root (default: current directory)",
     )
@@ -190,6 +221,7 @@ def _cmd_add(args) -> int:
             force=args.force,
             dry_run=args.dry_run,
             configure_containers=not args.no_bindpaths,
+            preserve_mtimes=not args.no_mtimes,
         ):
             _render_report(report)
             if report.result == WorktreeResult.STARTING:
@@ -226,6 +258,31 @@ def _cmd_add(args) -> int:
         print(f"\n{', '.join(parts)} at {worktree_path}")
 
     return 1 if has_failures else 0
+
+
+def _cmd_sync_mtimes(args) -> int:
+    from datalad_worktree.mtimes import resolve_worktree_target, sync_nested_mtimes
+
+    reports: list[WorktreeReport] = []
+    try:
+        worktree_path = resolve_worktree_target(
+            target=args.target,
+            dataset=args.dataset,
+        )
+        for report in sync_nested_mtimes(
+            worktree_path=worktree_path,
+            reference=args.reference,
+        ):
+            _render_report(report)
+            reports.append(report)
+    except ValueError as e:
+        print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
+        return 1
+
+    synced = sum(1 for r in reports if r.result == WorktreeResult.MTIMES_SYNCED)
+    print(f"\n{synced} datasets synced at {worktree_path}")
+
+    return 1 if any(r.result == WorktreeResult.FAILED for r in reports) else 0
 
 
 def _cmd_list(args) -> int:
@@ -377,6 +434,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_list(args)
     elif args.command == "delete":
         return _cmd_delete(args)
+    elif args.command == "sync-mtimes":
+        return _cmd_sync_mtimes(args)
 
     parser.print_help()
     return 1

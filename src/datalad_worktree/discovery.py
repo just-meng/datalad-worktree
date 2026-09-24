@@ -55,6 +55,30 @@ def is_git_repo(path: Path) -> bool:
         return False
 
 
+def is_git_repo_root(path: Path) -> bool:
+    """
+    Check whether a path is the *root* of a working tree.
+
+    ``is_git_repo`` only asks whether git can find a repository from here,
+    and git walks up -- so it answers True for an empty submodule mount
+    point, reporting the enclosing superdataset. Anything that resolves one
+    dataset against another needs this stricter question.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, NotADirectoryError):
+        return False
+
+    if result.returncode != 0:
+        return False
+    return Path(result.stdout.strip()).resolve() == path.resolve()
+
+
 def discover_subdatasets(superds_path: Path) -> list[SubDataset]:
     """
     Discover all subdatasets under a superdataset by recursively

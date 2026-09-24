@@ -29,6 +29,7 @@ class WorktreeResult(Enum):
     SKIPPED_NO_WORKTREE = auto()   # delete: no worktree found at path/branch
     SKIPPED_CONTAINER = auto()     # add: container left unconfigured (see message)
     CONFIGURED = auto()            # add: container bind-mount config written
+    MTIMES_SYNCED = auto()         # add: mtimes copied from the source working tree
     DELETED = auto()
     DELETED_BRANCH = auto()
     FAILED = auto()
@@ -100,6 +101,16 @@ def git_branch_exists(repo_path: Path, branch: str) -> bool:
         text=True,
     )
     return result.returncode == 0
+
+
+def git_current_branch(repo_path: Path) -> str:
+    """The branch checked out in ``repo_path``, or "" if detached."""
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "symbolic-ref", "--short", "-q", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 @dataclass

@@ -130,7 +130,6 @@ class TestCreateNestedWorktrees:
             branch="feat/test",
         )
         assert _all_ok(reports)
-        assert len(reports) == 4
         assert len(_succeeded(reports)) == 4
 
         wt_root = superds["wt_location"] / "test-wt"
