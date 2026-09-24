@@ -60,6 +60,46 @@ Creating worktrees discovers all subdatasets and produces:
 
 Each directory is a proper git worktree checked out on `my-feature`. If the branch doesn't exist in a given dataset, it is created automatically.
 
+## Recommended Workflow: Treat Worktrees as Disposable
+
+Create a worktree for one run, ship its results home, delete it. Do not keep a
+worktree around and run in it repeatedly.
+
+```bash
+cd /data/my-superdataset
+worktree add runs-2026-09-24 /tmp/worktrees/runs-2026-09-24
+
+cd /tmp/worktrees/runs-2026-09-24
+snakemake -c 1                      # the long run
+
+cd /data/my-superdataset
+worktree fetch runs-2026-09-24      # results home, mtimes included
+worktree delete runs-2026-09-24     # and dispose of it
+```
+
+The reason is that a long-lived worktree accumulates its own pipeline state,
+and that state goes stale in a way nothing here can repair. Snakemake records
+provenance per output under the untracked `.snakemake/metadata` — including the
+**text of the shell command** that produced it. Edit a rule afterwards, even
+cosmetically, and every output recorded in that worktree trips Snakemake's
+`code` rerun trigger.
+
+The effect is counter-intuitive: a worktree that has *never* run is cleaner
+than one that has. With no records at all, Snakemake reports "missing
+provenance" and falls back to mtimes — which `add` and `fetch` keep correct. A
+worktree carrying 178 stale records once turned a 25-job dry run into 78 jobs,
+purely because a `-J 16` had been added to a rule since it last ran.
+
+If you do reuse a path, `add -f` replaces the worktree *and* its branch, so the
+result is equivalent to a fresh one:
+
+```bash
+worktree add -f runs /tmp/worktrees/runs   # refuses if it holds unmerged work
+```
+
+`.snakemake/` is gitignored, so it never travels into a worktree in the first
+place — deleting the worktree is what stops it going stale.
+
 ## Usage
 
 All commands are run from the superdataset root (or pass `-d <path>` to specify it).
