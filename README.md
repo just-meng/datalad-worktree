@@ -2,9 +2,7 @@
 
 Create nested git worktrees for [DataLad](https://www.datalad.org/) dataset hierarchies.
 
-When working with DataLad superdatasets that contain nested subdatasets, you sometimes need to work on a feature branch across the entire hierarchy. Manually creating `git worktree` for each dataset is tedious and error-prone. This tool automates that: point it at a superdataset, give it a branch name, and it mirrors the entire nested structure under a new worktree root.
-
-**Python 3.11+, no runtime dependencies** (DataLad optional for `datalad worktree-*` commands).
+This tool is designed to facilitate [automated workflows with provenance tracking using DataLad and git worktrees](https://blog.datalad.org/posts/snakemake-datalad-worktree). Develop in the main worktree, `worktree add` a nested worktree that preserves the mtimes, compute in the worktree while continuing to develop in main, `worktree fetch` the results back in main, `worktree delete` or simply overwrite the worktree in the next iteration. Entirely ephemeral and instant. 
 
 ## Installation
 
@@ -12,21 +10,14 @@ As a DataLad extension (recommended), alongside other extensions:
 
 ```bash
 uv tool install datalad \
-  --with datalad-next \
-  --with datalad-container \
   --with datalad-worktree@git+https://github.com/just-meng/datalad-worktree.git \
-  --force
 ```
 
-For development:
+For development with an editable installation:
 
 ```bash
 cd datalad-worktree
 uv sync --dev
-
-# Run from any directory using local code
-uv run --project ~/path/to/datalad-worktree worktree list
-uv run --project ~/path/to/datalad-worktree datalad worktree-list
 ```
 
 ## Quick Start
