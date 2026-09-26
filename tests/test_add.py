@@ -267,28 +267,50 @@ class TestExistingWorktrees:
         assert found == []
 
 
-class TestForceReplacesWorktrees:
-    def test_without_force_it_refuses(self, superds: dict):
+class TestReplacingWorktrees:
+    """
+    Replacement is the default (issue #28).
+
+    Worktrees are ephemeral, and a worktree that is merged or behind holds
+    nothing worth keeping except stale mtimes -- so refusing to overwrite it
+    only made the caller type a flag. What still refuses is unmerged work.
+    """
+
+    def test_a_merged_worktree_is_replaced_without_any_flag(self, superds: dict):
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,
                     branch="runs")
 
         reports = _run_create(superds_path=superds["super"],
-                              worktree_path=worktree, branch="runs2")
-
-        assert any("already exists" in r.message for r in _failed(reports))
-
-    def test_force_replaces_a_merged_worktree(self, superds: dict):
-        worktree = superds["wt_location"] / "wt"
-        _run_create(superds_path=superds["super"], worktree_path=worktree,
-                    branch="runs")
-
-        reports = _run_create(superds_path=superds["super"],
-                              worktree_path=worktree, branch="runs", force=True)
+                              worktree_path=worktree, branch="runs")
 
         assert _all_ok(reports)
         assert _succeeded(reports)
         assert (worktree / ".git").exists()
+
+    def test_a_stray_directory_is_still_refused(self, superds: dict):
+        """Only paths git calls worktrees are replaced, flag or no flag."""
+        worktree = superds["wt_location"] / "wt"
+        worktree.mkdir(parents=True)
+        (worktree / "someones-data.txt").write_text("not a worktree\n")
+
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="runs")
+
+        assert any("already exists" in r.message for r in _failed(reports))
+        assert (worktree / "someones-data.txt").exists()
+
+    def test_replacement_can_be_switched_off(self, superds: dict):
+        """The library keeps the old refusal available; the CLI does not."""
+        worktree = superds["wt_location"] / "wt"
+        _run_create(superds_path=superds["super"], worktree_path=worktree,
+                    branch="runs")
+
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="runs2",
+                              replace=False)
+
+        assert any("already exists" in r.message for r in _failed(reports))
 
     def test_force_deletes_the_branch_so_the_recreate_starts_from_main(
         self, superds: dict,
@@ -304,19 +326,19 @@ class TestForceReplacesWorktrees:
         assert _head(superds["super"]) == stale
 
         _run_create(superds_path=superds["super"], worktree_path=worktree,
-                    branch="runs", force=True)
+                    branch="runs")
 
         # recreated from the main checkout's HEAD, not from a stale branch ref
         assert _head(worktree) == _head(superds["super"])
 
-    def test_force_refuses_unmerged_work_and_changes_nothing(self, superds: dict):
+    def test_unmerged_work_is_refused_and_nothing_changes(self, superds: dict):
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,
                     branch="runs")
         unmerged = _commit_in(worktree)
 
         reports = _run_create(superds_path=superds["super"],
-                              worktree_path=worktree, branch="runs", force=True)
+                              worktree_path=worktree, branch="runs")
 
         failed = _failed(reports)
         assert failed
@@ -325,7 +347,7 @@ class TestForceReplacesWorktrees:
         # the worktree and its commit survive untouched
         assert _head(worktree) == unmerged
 
-    def test_force_unmerged_discards_it(self, superds: dict):
+    def test_force_discards_it(self, superds: dict):
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,
                     branch="runs")
@@ -333,14 +355,14 @@ class TestForceReplacesWorktrees:
 
         reports = _run_create(superds_path=superds["super"],
                               worktree_path=worktree, branch="runs",
-                              force=True, force_unmerged=True)
+                              discard_unmerged=True)
 
         assert _all_ok(reports)
         assert _head(worktree) != unmerged
         assert _head(worktree) == _head(superds["super"])
 
     def test_uncommitted_changes_are_discarded(self, superds: dict):
-        """Decided deliberately: -f refuses on unmerged commits, not dirt."""
+        """Decided deliberately: replacement refuses on commits, not on dirt."""
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,
                     branch="runs")
@@ -348,7 +370,7 @@ class TestForceReplacesWorktrees:
         _git(worktree, "add", "scratch.txt")
 
         reports = _run_create(superds_path=superds["super"],
-                              worktree_path=worktree, branch="runs", force=True)
+                              worktree_path=worktree, branch="runs")
 
         assert _all_ok(reports)
         assert not (worktree / "scratch.txt").exists()
@@ -361,7 +383,7 @@ class TestForceReplacesWorktrees:
 
         reports = _run_create(superds_path=superds["super"],
                               worktree_path=worktree, branch="runs",
-                              force=True, dry_run=True)
+                              dry_run=True)
 
         assert any("would replace" in r.message for r in reports)
         assert _head(worktree) == before
@@ -382,14 +404,18 @@ class TestForceReplacesWorktrees:
 
 
 class TestForceCLI:
-    def test_parser_accepts_both_force_flags(self):
+    def test_force_is_the_only_force_flag(self):
+        """-F is gone (issue #28); an old invocation must fail, not change meaning."""
+        import pytest as _pytest
+
         from datalad_worktree.cli import build_parser
 
-        args = build_parser().parse_args(["add", "-F", "runs", "/tmp/wt"])
-        assert args.force_unmerged is True
+        args = build_parser().parse_args(["add", "runs", "/tmp/wt"])
+        assert args.force is False
         args = build_parser().parse_args(["add", "-f", "runs", "/tmp/wt"])
         assert args.force is True
-        assert args.force_unmerged is False
+        with _pytest.raises(SystemExit):
+            build_parser().parse_args(["add", "-F", "runs", "/tmp/wt"])
 
 
 # ── Leftover branches from an earlier run ────────────────────────────────────
@@ -471,16 +497,16 @@ class TestLeftoverBranches:
 
         failed = _failed(reports)
         assert [r.dataset_path for r in failed] == ["sub-02"]
-        assert "force-unmerged" in failed[0].message
+        assert "--force" in failed[0].message
         assert not worktree.exists()   # all-or-nothing
 
-    def test_force_unmerged_resets_it_anyway(self, superds: dict):
+    def test_force_resets_it_anyway(self, superds: dict):
         self._leftover_in_sub02(superds, ahead=True)
         worktree = superds["wt_location"] / "wt"
 
         reports = _run_create(
             superds_path=superds["super"], worktree_path=worktree, branch="runs",
-            force_unmerged=True,
+            discard_unmerged=True,
         )
 
         assert _all_ok(reports)
