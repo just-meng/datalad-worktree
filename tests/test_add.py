@@ -540,3 +540,138 @@ class TestLeftoverBranches:
         assert not [r for r in reports
                     if r.result == WorktreeResult.CREATED_RESET_BRANCH]
         assert any("no-create-branch" in (r.message or "") for r in _failed(reports))
+
+
+# ── --follow-parent: the state the parent records, not the branch name ───────
+
+
+class TestFollowParent:
+    """
+    Issue #29. A subdataset's state comes from the commit its parent records,
+    so the worktrees reproduce one consistent state of the hierarchy instead of
+    one branch name per dataset. With a commit, that state is a past one.
+    """
+
+    def test_subdataset_follows_the_recorded_commit(self, superds: dict):
+        """Without the flag the subdataset is at its own tip, which the
+        superdataset has not recorded -- a worktree born dirty."""
+        sub02 = superds["sub02"]
+        recorded = _head(sub02)
+        _commit_in(sub02, "unrecorded.txt")          # ahead of the gitlink
+        assert _head(sub02) != recorded
+
+        plain = superds["wt_location"] / "plain"
+        _run_create(superds_path=superds["super"], worktree_path=plain,
+                    branch="a")
+        assert "sub-02" in _git(plain, "status", "--short").stdout
+
+        followed = superds["wt_location"] / "followed"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=followed, branch="b",
+                              follow_parent=True)
+
+        assert _all_ok(reports)
+        assert _head(followed / "sub-02") == recorded
+        assert _git(followed, "status", "--short").stdout == ""
+
+    def test_nested_subdataset_resolves_through_its_own_parent(
+        self, superds: dict,
+    ):
+        """
+        The trap this exists to avoid: `<commit>:sub-01/derivatives` cannot see
+        inside sub-01's tree, so the gitlink has to be read from sub-01 at the
+        commit the superdataset records for *it*.
+        """
+        deriv = superds["sub01_deriv"]
+        sub01 = superds["sub01"]
+        _commit_in(deriv, "d1.txt")
+        _git(sub01, "commit", "-qam", "record derivatives@d1")
+        _git(superds["super"], "commit", "-qam", "record sub-01")
+        recorded_deriv = _head(deriv)          # what sub-01 records *now*...
+        # ... then derivatives and sub-01 move on, unrecorded by the superds
+        _commit_in(deriv, "d2.txt")
+        _git(sub01, "commit", "-qam", "record derivatives@d2")
+        assert _head(deriv) != recorded_deriv
+
+        worktree = superds["wt_location"] / "wt"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="runs",
+                              follow_parent=True)
+
+        assert _all_ok(reports)
+        assert _head(worktree / "sub-01" / "derivatives") == recorded_deriv
+
+    def test_at_a_commit_mirrors_that_state(self, superds: dict):
+        sub02 = superds["sub02"]
+        old_super = _head(superds["super"])
+        old_sub = _head(sub02)
+        _commit_in(sub02, "later.txt")
+        _git(superds["super"], "commit", "-qam", "record sub-02 later")
+
+        worktree = superds["wt_location"] / "wt"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="rerun",
+                              follow_parent=True, at_commit=old_super)
+
+        assert _all_ok(reports)
+        assert _head(worktree) == old_super
+        assert _head(worktree / "sub-02") == old_sub
+        assert not (worktree / "sub-02" / "later.txt").exists()
+        assert _git(worktree, "status", "--short").stdout == ""
+
+    def test_a_dataset_added_after_the_commit_is_absent(self, superds: dict):
+        """The commit defines the set: what was not there gets no worktree."""
+        before = _head(superds["super"])
+        _git(superds["super"], "-c", "protocol.file.allow=always",
+             "submodule", "add", "-q", str(superds["sub02"]), "late")
+        _git(superds["super"], "commit", "-qm", "add a late subdataset")
+
+        worktree = superds["wt_location"] / "wt"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="rerun",
+                              follow_parent=True, at_commit=before)
+
+        assert _all_ok(reports)
+        assert not (worktree / "late").exists()
+        assert not [r for r in reports if r.dataset_path == "late"]
+
+    def test_an_unresolvable_commit_refuses(self, superds: dict):
+        worktree = superds["wt_location"] / "wt"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="rerun",
+                              follow_parent=True, at_commit="deadbeef")
+
+        assert any("cannot resolve commit" in r.message for r in _failed(reports))
+        assert not worktree.exists()
+
+    def test_a_recorded_commit_the_subdataset_lacks_refuses(self, superds: dict):
+        """
+        The realistic failure: the superdataset names a subdataset commit that
+        was never fetched here. Half a hierarchy is worse than none.
+        """
+        bogus = "0" * 39 + "1"
+        _git(superds["super"], "update-index", "--add",
+             "--cacheinfo", f"160000,{bogus},sub-02")
+        _git(superds["super"], "-c", "user.email=t@e.st", "-c", "user.name=t",
+             "commit", "-qm", "record a commit nobody has")
+
+        worktree = superds["wt_location"] / "wt"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="rerun",
+                              follow_parent=True)
+
+        failed = _failed(reports)
+        assert [r.dataset_path for r in failed] == ["sub-02"]
+        assert "not present in this subdataset" in failed[0].message
+        assert not worktree.exists()
+
+    def test_cli_flag_takes_an_optional_commit(self):
+        from datalad_worktree.cli import build_parser
+
+        p = build_parser()
+        assert p.parse_args(["add", "b", "/tmp/wt"]).follow_parent is None
+        assert p.parse_args(
+            ["add", "b", "/tmp/wt", "--follow-parent"]).follow_parent == "HEAD"
+        assert p.parse_args(
+            ["add", "b", "/tmp/wt", "--follow-parent", "4f2a91c"]
+        ).follow_parent == "4f2a91c"
