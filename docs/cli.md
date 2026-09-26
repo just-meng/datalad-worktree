@@ -21,11 +21,8 @@ worktree add <branch> <worktree-path> [options]
   <worktree-path>           path for the superdataset worktree
 
   -n, --dry-run             show what would be done without doing it
-  -f, --force               replace worktrees already at the destination,
-                            deleting their branches too; refuses if any still
-                            holds commits the main checkout lacks
-  -F, --force-unmerged      replace them even then, discarding that work
-                            (implies --force)
+  -f, --force               replace an existing worktree even if it holds
+                            commits the main checkout lacks, discarding them
   --no-create-branch        only checkout existing branches, don't create new ones
   --no-bindpaths            don't configure container bind mounts
   --no-mtimes               don't copy file mtimes from the source working trees
@@ -36,7 +33,7 @@ Creates a worktree for the superdataset and every installed subdataset, on `bran
 
 Where the branch does not exist it is created from that dataset's current HEAD. Where it exists, what happens depends on whether it exists *everywhere*:
 
-- **In only some datasets** — a leftover, since `worktree delete` keeps branches by default. It is reset to that dataset's current HEAD, reported as `(leftover branch reset)`, so the worktree is a fresh start rather than a hybrid of the last run and the present. Refused instead, changing nothing, if that branch holds commits its checkout lacks — a finished run whose results were never fetched, or a branch you created in one dataset on purpose. Then either `worktree fetch` it first, give the branch to every dataset, or `-F` to reset it and discard those commits.
+- **In only some datasets** — a leftover, since `worktree delete` keeps branches by default. It is reset to that dataset's current HEAD, reported as `(leftover branch reset)`, so the worktree is a fresh start rather than a hybrid of the last run and the present. Refused instead, changing nothing, if that branch holds commits its checkout lacks — a finished run whose results were never fetched, or a branch you created in one dataset on purpose. Then either `worktree fetch` it first, give the branch to every dataset, or `-f` to reset it and discard those commits.
 - **In every dataset** — a state the hierarchy once recorded, since the superdataset commit names the subdataset commits belonging with it. Checked out as it stands, reported as `(existing branch)`.
 
 So each line says which happened: `(new branch)`, `(existing branch)`, or `(leftover branch reset)`.
@@ -53,11 +50,16 @@ Only the **superdataset's** containers are configured. A container registered in
 worktree add experiment /tmp/wt
 worktree add -n experiment /tmp/wt                  # dry run
 worktree add --no-create-branch v1.0 /tmp/wt        # refuse unless the branch exists
-worktree add -f runs /tmp/worktrees/runs            # replace an existing worktree
-worktree add -F runs /tmp/worktrees/runs            # ... discarding unmerged work
+worktree add runs /tmp/worktrees/runs               # replaces an existing worktree
+worktree add -f runs /tmp/worktrees/runs            # ... even if it holds unfetched work
 ```
 
-`-f` replaces the worktree *and* deletes its branch, so the replacement starts from the main checkout's current state instead of inheriting the old branch's commits — equivalent to a brand new worktree. Only paths git reports as worktrees are replaced; a plain directory sitting at the destination gets the usual "worktree root already exists" refusal.
+A worktree already at the destination is **replaced by default** (issue #28). Worktrees are ephemeral, and one that is merged or behind holds nothing worth keeping but stale mtimes, so refusing only made you type a flag. Replacement deletes the branch too, so the new worktree starts from the main checkout's current state rather than inheriting the old branch's commits — equivalent to a brand new one.
+
+Two things still refuse, and `-f` lifts only the first:
+
+- the worktree holds commits the main checkout lacks — a run whose results were never fetched. `worktree fetch` it first, or `-f` to discard them.
+- the destination is a directory git does not report as a worktree. That is never deleted, flag or no flag; you get "worktree root already exists".
 
 ## `worktree fetch`
 

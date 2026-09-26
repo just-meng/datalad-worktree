@@ -216,7 +216,7 @@ def unmerged_branches(
     Which branches about to be reset still hold commits their checkout lacks.
 
     That is a finished run whose results were never fetched, so resetting the
-    branch would orphan them. Refused unless ``--force-unmerged``.
+    branch would orphan them. Refused unless ``--force``.
     """
     blocked: list[tuple[str, str]] = []
     for dataset_path, repo, _has in rows:
@@ -232,7 +232,7 @@ def unmerged_branches(
         blocked.append((
             dataset_path,
             f"branch '{branch}' {detail}; fetch them first, "
-            f"or use --force-unmerged to reset it anyway",
+            f"or use --force to reset it anyway",
         ))
     return blocked
 
@@ -243,8 +243,8 @@ def unmerged_worktrees(
     """
     Which existing worktrees still hold commits the main checkout lacks.
 
-    Replacing one of those throws work away, so ``--force`` refuses and
-    ``--force-unmerged`` is required. Merged means the worktree's tip is
+    Replacing one of those throws work away, so the default replacement
+    refuses and ``--force`` is required. Merged means the worktree's tip is
     contained in its main checkout's HEAD -- ``up-to-date`` or ``behind`` --
     which is the state a ``worktree fetch`` leaves behind. A detached HEAD
     counts as unmerged, since there is no branch to reason about.
@@ -261,7 +261,7 @@ def unmerged_worktrees(
         unmerged.append((
             dataset_path,
             f"{worktree} still holds unmerged work ({detail}); "
-            f"fetch it first, or use --force-unmerged to discard it",
+            f"fetch it first, or use --force to discard it",
         ))
     return unmerged
 
@@ -335,8 +335,8 @@ def create_nested_worktrees(
     worktree_path: Path,
     branch: str,
     create_branch: bool = True,
-    force: bool = False,
-    force_unmerged: bool = False,
+    replace: bool = True,
+    discard_unmerged: bool = False,
     dry_run: bool = False,
     configure_containers: bool = True,
     preserve_mtimes: bool = True,
@@ -348,12 +348,15 @@ def create_nested_worktrees(
     dataset would fail (e.g. branch already checked out elsewhere), no
     worktrees are created and errors are yielded as FAILED reports.
 
-    ``force`` replaces worktrees that already exist at the destination,
-    deleting their branches too so the recreate starts from the main
-    checkout's state -- worktrees are meant to be disposable. It refuses,
-    changing nothing, if any of them still holds commits the main checkout
-    lacks; ``force_unmerged`` discards those as well. Uncommitted changes are
-    always discarded, as ``worktree delete --force`` does.
+    ``replace`` (on by default, issue #28) replaces a worktree that already
+    exists at the destination, deleting its branch too so the recreate starts
+    from the main checkout's state -- worktrees are meant to be disposable, and
+    keeping one that is merged or behind buys nothing but stale mtimes. It
+    refuses, changing nothing, if the worktree still holds commits the main
+    checkout lacks; ``discard_unmerged`` (the CLI's ``-f``) discards those as
+    well. Uncommitted changes are always discarded, as ``worktree delete
+    --force`` does. Only paths git reports as worktrees are replaced, so a
+    stray directory at the destination is still an error.
 
     Unless ``configure_containers`` is False, every created worktree that
     registers a container gets bind-mount configuration so that
@@ -390,11 +393,11 @@ def create_nested_worktrees(
     # Done before the pre-flight so that the path and branch conflicts it
     # would otherwise report are already gone.
     replaced_root: Path | None = None
-    if force or force_unmerged:
+    if replace or discard_unmerged:
         existing = existing_worktrees(superds_path, worktree_root, subdatasets)
         if existing:
             replaced_root = worktree_root
-            if not force_unmerged:
+            if not discard_unmerged:
                 blocked = unmerged_worktrees(existing)
                 if blocked:
                     for dataset_path, message in blocked:
@@ -433,7 +436,7 @@ def create_nested_worktrees(
     presence = branch_presence(superds_path, branch, subdatasets)
     to_reset = branches_to_reset(presence) if create_branch else set()
 
-    if to_reset and not force_unmerged:
+    if to_reset and not discard_unmerged:
         blocked = unmerged_branches(presence, to_reset, branch)
         if blocked:
             for dataset_path, message in blocked:
@@ -499,7 +502,7 @@ def create_nested_worktrees(
             dest_path=worktree_root,
             branch=branch,
             create_branch=create_branch,
-            force=force,
+            force=discard_unmerged,
             reset_branch="." in to_reset,
         )
         yield WorktreeReport(
@@ -568,7 +571,7 @@ def create_nested_worktrees(
             dest_path=dest_subds,
             branch=branch,
             create_branch=create_branch,
-            force=force,
+            force=discard_unmerged,
             reset_branch=subds.rel_path in to_reset,
         )
 

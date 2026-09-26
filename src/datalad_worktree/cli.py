@@ -137,14 +137,14 @@ def build_parser():
         "-n", "--dry-run", action="store_true", default=False,
         help="show what would be done without doing it",
     )
+    # A worktree already at the destination is replaced by default (issue
+    # #28): worktrees are ephemeral, and keeping one that is merged or behind
+    # buys nothing but stale mtimes. -f is only needed to discard work.
     add_p.add_argument(
         "-f", "--force", action="store_true", default=False,
-        help="replace worktrees that already exist at the destination; "
-             "refuses if any still holds unmerged work",
-    )
-    add_p.add_argument(
-        "-F", "--force-unmerged", action="store_true", default=False,
-        help="replace them even if they hold unmerged work (implies --force)",
+        help="replace an existing worktree even if it holds commits the main "
+             "checkout lacks, discarding them (default: replace only when "
+             "there is nothing to lose)",
     )
     add_p.add_argument(
         "--no-create-branch", action="store_true", default=False,
@@ -244,8 +244,7 @@ def _cmd_add(args) -> int:
             worktree_path=worktree_path,
             branch=args.branch,
             create_branch=not args.no_create_branch,
-            force=args.force or args.force_unmerged,
-            force_unmerged=args.force_unmerged,
+            discard_unmerged=args.force,
             dry_run=args.dry_run,
             configure_containers=not args.no_bindpaths,
             preserve_mtimes=not args.no_mtimes,
