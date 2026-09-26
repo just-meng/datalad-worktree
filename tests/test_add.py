@@ -34,7 +34,8 @@ def _all_ok(reports: list[WorktreeReport]) -> bool:
 def _succeeded(reports: list[WorktreeReport]) -> list[WorktreeReport]:
     return [
         r for r in reports
-        if r.result in (WorktreeResult.CREATED, WorktreeResult.CREATED_NEW_BRANCH)
+        if r.result in (WorktreeResult.CREATED, WorktreeResult.CREATED_NEW_BRANCH,
+                        WorktreeResult.CREATED_RESET_BRANCH)
     ]
 
 
@@ -266,28 +267,50 @@ class TestExistingWorktrees:
         assert found == []
 
 
-class TestForceReplacesWorktrees:
-    def test_without_force_it_refuses(self, superds: dict):
+class TestReplacingWorktrees:
+    """
+    Replacement is the default (issue #28).
+
+    Worktrees are ephemeral, and a worktree that is merged or behind holds
+    nothing worth keeping except stale mtimes -- so refusing to overwrite it
+    only made the caller type a flag. What still refuses is unmerged work.
+    """
+
+    def test_a_merged_worktree_is_replaced_without_any_flag(self, superds: dict):
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,
                     branch="runs")
 
         reports = _run_create(superds_path=superds["super"],
-                              worktree_path=worktree, branch="runs2")
-
-        assert any("already exists" in r.message for r in _failed(reports))
-
-    def test_force_replaces_a_merged_worktree(self, superds: dict):
-        worktree = superds["wt_location"] / "wt"
-        _run_create(superds_path=superds["super"], worktree_path=worktree,
-                    branch="runs")
-
-        reports = _run_create(superds_path=superds["super"],
-                              worktree_path=worktree, branch="runs", force=True)
+                              worktree_path=worktree, branch="runs")
 
         assert _all_ok(reports)
         assert _succeeded(reports)
         assert (worktree / ".git").exists()
+
+    def test_a_stray_directory_is_still_refused(self, superds: dict):
+        """Only paths git calls worktrees are replaced, flag or no flag."""
+        worktree = superds["wt_location"] / "wt"
+        worktree.mkdir(parents=True)
+        (worktree / "someones-data.txt").write_text("not a worktree\n")
+
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="runs")
+
+        assert any("already exists" in r.message for r in _failed(reports))
+        assert (worktree / "someones-data.txt").exists()
+
+    def test_replacement_can_be_switched_off(self, superds: dict):
+        """The library keeps the old refusal available; the CLI does not."""
+        worktree = superds["wt_location"] / "wt"
+        _run_create(superds_path=superds["super"], worktree_path=worktree,
+                    branch="runs")
+
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="runs2",
+                              replace=False)
+
+        assert any("already exists" in r.message for r in _failed(reports))
 
     def test_force_deletes_the_branch_so_the_recreate_starts_from_main(
         self, superds: dict,
@@ -303,19 +326,19 @@ class TestForceReplacesWorktrees:
         assert _head(superds["super"]) == stale
 
         _run_create(superds_path=superds["super"], worktree_path=worktree,
-                    branch="runs", force=True)
+                    branch="runs")
 
         # recreated from the main checkout's HEAD, not from a stale branch ref
         assert _head(worktree) == _head(superds["super"])
 
-    def test_force_refuses_unmerged_work_and_changes_nothing(self, superds: dict):
+    def test_unmerged_work_is_refused_and_nothing_changes(self, superds: dict):
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,
                     branch="runs")
         unmerged = _commit_in(worktree)
 
         reports = _run_create(superds_path=superds["super"],
-                              worktree_path=worktree, branch="runs", force=True)
+                              worktree_path=worktree, branch="runs")
 
         failed = _failed(reports)
         assert failed
@@ -324,7 +347,7 @@ class TestForceReplacesWorktrees:
         # the worktree and its commit survive untouched
         assert _head(worktree) == unmerged
 
-    def test_force_unmerged_discards_it(self, superds: dict):
+    def test_force_discards_it(self, superds: dict):
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,
                     branch="runs")
@@ -332,14 +355,14 @@ class TestForceReplacesWorktrees:
 
         reports = _run_create(superds_path=superds["super"],
                               worktree_path=worktree, branch="runs",
-                              force=True, force_unmerged=True)
+                              discard_unmerged=True)
 
         assert _all_ok(reports)
         assert _head(worktree) != unmerged
         assert _head(worktree) == _head(superds["super"])
 
     def test_uncommitted_changes_are_discarded(self, superds: dict):
-        """Decided deliberately: -f refuses on unmerged commits, not dirt."""
+        """Decided deliberately: replacement refuses on commits, not on dirt."""
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,
                     branch="runs")
@@ -347,7 +370,7 @@ class TestForceReplacesWorktrees:
         _git(worktree, "add", "scratch.txt")
 
         reports = _run_create(superds_path=superds["super"],
-                              worktree_path=worktree, branch="runs", force=True)
+                              worktree_path=worktree, branch="runs")
 
         assert _all_ok(reports)
         assert not (worktree / "scratch.txt").exists()
@@ -360,7 +383,7 @@ class TestForceReplacesWorktrees:
 
         reports = _run_create(superds_path=superds["super"],
                               worktree_path=worktree, branch="runs",
-                              force=True, dry_run=True)
+                              dry_run=True)
 
         assert any("would replace" in r.message for r in reports)
         assert _head(worktree) == before
@@ -381,11 +404,274 @@ class TestForceReplacesWorktrees:
 
 
 class TestForceCLI:
-    def test_parser_accepts_both_force_flags(self):
+    def test_force_is_the_only_force_flag(self):
+        """-F is gone (issue #28); an old invocation must fail, not change meaning."""
+        import pytest as _pytest
+
         from datalad_worktree.cli import build_parser
 
-        args = build_parser().parse_args(["add", "-F", "runs", "/tmp/wt"])
-        assert args.force_unmerged is True
+        args = build_parser().parse_args(["add", "runs", "/tmp/wt"])
+        assert args.force is False
         args = build_parser().parse_args(["add", "-f", "runs", "/tmp/wt"])
         assert args.force is True
-        assert args.force_unmerged is False
+        with _pytest.raises(SystemExit):
+            build_parser().parse_args(["add", "-F", "runs", "/tmp/wt"])
+
+
+# ── Leftover branches from an earlier run ────────────────────────────────────
+
+
+def _branch_of(repo: Path) -> str:
+    return _git(repo, "branch", "--show-current").stdout.strip()
+
+
+class TestLeftoverBranches:
+    """
+    A branch already present in *some* datasets is a leftover, not a state.
+
+    `worktree delete` keeps branches by default, so the next `add` on the same
+    name used to check them out -- silently resurrecting the previous run's
+    code and outputs in those datasets while the others started fresh. A
+    branch present in *every* dataset is different: the superdataset commit
+    names the subdataset commits that belong with it, so that is a recorded
+    state somebody may want back, and it is left alone.
+    """
+
+    def _leftover_in_sub02(self, superds: dict, *, ahead: bool) -> Path:
+        """Put a 'runs' branch in sub-02 only, optionally holding a commit."""
+        sub02 = superds["sub02"]
+        main = _branch_of(sub02)
+        if ahead:
+            _git(sub02, "checkout", "-q", "-b", "runs")
+            _commit_in(sub02, "unfetched-result.txt")
+            _git(sub02, "checkout", "-q", main)
+        else:
+            _git(sub02, "branch", "runs")
+            _commit_in(sub02, "moved-on.txt")   # leaves 'runs' behind HEAD
+        return sub02
+
+    def test_leftover_is_reset_to_the_source_head(self, superds: dict):
+        sub02 = self._leftover_in_sub02(superds, ahead=False)
+        worktree = superds["wt_location"] / "wt"
+
+        reports = _run_create(
+            superds_path=superds["super"], worktree_path=worktree, branch="runs",
+        )
+
+        assert _all_ok(reports)
+        reset = [r for r in reports
+                 if r.result == WorktreeResult.CREATED_RESET_BRANCH]
+        assert [r.dataset_path for r in reset] == ["sub-02"]
+        # the whole point: the worktree starts where the checkout is now
+        assert _head(worktree / "sub-02") == _head(sub02)
+        assert (worktree / "sub-02" / "moved-on.txt").exists()
+
+    def test_branch_in_every_dataset_is_checked_out_as_is(self, superds: dict):
+        """A state recorded across the hierarchy is not a leftover."""
+        datasets = [superds["super"], superds["sub01"],
+                    superds["sub01_deriv"], superds["sub02"]]
+        for ds in datasets:
+            _git(ds, "branch", "runs")
+        recorded = _head(superds["super"])
+        _commit_in(superds["super"], "later-work.txt")   # main moves on
+        worktree = superds["wt_location"] / "wt"
+
+        reports = _run_create(
+            superds_path=superds["super"], worktree_path=worktree, branch="runs",
+        )
+
+        assert _all_ok(reports)
+        assert not [r for r in reports
+                    if r.result == WorktreeResult.CREATED_RESET_BRANCH]
+        assert _head(worktree) == recorded
+        assert not (worktree / "later-work.txt").exists()
+
+    def test_refuses_when_the_leftover_holds_unfetched_commits(self, superds: dict):
+        """A finished run whose results were never fetched is not discarded."""
+        self._leftover_in_sub02(superds, ahead=True)
+        worktree = superds["wt_location"] / "wt"
+
+        reports = _run_create(
+            superds_path=superds["super"], worktree_path=worktree, branch="runs",
+        )
+
+        failed = _failed(reports)
+        assert [r.dataset_path for r in failed] == ["sub-02"]
+        assert "--force" in failed[0].message
+        assert not worktree.exists()   # all-or-nothing
+
+    def test_force_resets_it_anyway(self, superds: dict):
+        self._leftover_in_sub02(superds, ahead=True)
+        worktree = superds["wt_location"] / "wt"
+
+        reports = _run_create(
+            superds_path=superds["super"], worktree_path=worktree, branch="runs",
+            discard_unmerged=True,
+        )
+
+        assert _all_ok(reports)
+        assert any(r.result == WorktreeResult.CREATED_RESET_BRANCH
+                   and r.dataset_path == "sub-02" for r in reports)
+        assert not (worktree / "sub-02" / "unfetched-result.txt").exists()
+
+    def test_dry_run_says_the_branch_would_be_reset(self, superds: dict):
+        self._leftover_in_sub02(superds, ahead=False)
+        worktree = superds["wt_location"] / "wt"
+
+        reports = _run_create(
+            superds_path=superds["super"], worktree_path=worktree, branch="runs",
+            dry_run=True,
+        )
+
+        noted = [r for r in reports if "reset" in (r.message or "")]
+        assert [r.dataset_path for r in noted] == ["sub-02"]
+        assert not worktree.exists()
+
+    def test_no_create_branch_never_resets(self, superds: dict):
+        """--no-create-branch asks for the branch as it stands."""
+        self._leftover_in_sub02(superds, ahead=False)
+        worktree = superds["wt_location"] / "wt"
+
+        reports = _run_create(
+            superds_path=superds["super"], worktree_path=worktree, branch="runs",
+            create_branch=False,
+        )
+
+        assert not [r for r in reports
+                    if r.result == WorktreeResult.CREATED_RESET_BRANCH]
+        assert any("no-create-branch" in (r.message or "") for r in _failed(reports))
+
+
+# ── --follow-parent: the state the parent records, not the branch name ───────
+
+
+class TestFollowParent:
+    """
+    Issue #29. A subdataset's state comes from the commit its parent records,
+    so the worktrees reproduce one consistent state of the hierarchy instead of
+    one branch name per dataset. With a commit, that state is a past one.
+    """
+
+    def test_subdataset_follows_the_recorded_commit(self, superds: dict):
+        """Without the flag the subdataset is at its own tip, which the
+        superdataset has not recorded -- a worktree born dirty."""
+        sub02 = superds["sub02"]
+        recorded = _head(sub02)
+        _commit_in(sub02, "unrecorded.txt")          # ahead of the gitlink
+        assert _head(sub02) != recorded
+
+        plain = superds["wt_location"] / "plain"
+        _run_create(superds_path=superds["super"], worktree_path=plain,
+                    branch="a")
+        assert "sub-02" in _git(plain, "status", "--short").stdout
+
+        followed = superds["wt_location"] / "followed"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=followed, branch="b",
+                              follow_parent=True)
+
+        assert _all_ok(reports)
+        assert _head(followed / "sub-02") == recorded
+        assert _git(followed, "status", "--short").stdout == ""
+
+    def test_nested_subdataset_resolves_through_its_own_parent(
+        self, superds: dict,
+    ):
+        """
+        The trap this exists to avoid: `<commit>:sub-01/derivatives` cannot see
+        inside sub-01's tree, so the gitlink has to be read from sub-01 at the
+        commit the superdataset records for *it*.
+        """
+        deriv = superds["sub01_deriv"]
+        sub01 = superds["sub01"]
+        _commit_in(deriv, "d1.txt")
+        _git(sub01, "commit", "-qam", "record derivatives@d1")
+        _git(superds["super"], "commit", "-qam", "record sub-01")
+        recorded_deriv = _head(deriv)          # what sub-01 records *now*...
+        # ... then derivatives and sub-01 move on, unrecorded by the superds
+        _commit_in(deriv, "d2.txt")
+        _git(sub01, "commit", "-qam", "record derivatives@d2")
+        assert _head(deriv) != recorded_deriv
+
+        worktree = superds["wt_location"] / "wt"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="runs",
+                              follow_parent=True)
+
+        assert _all_ok(reports)
+        assert _head(worktree / "sub-01" / "derivatives") == recorded_deriv
+
+    def test_at_a_commit_mirrors_that_state(self, superds: dict):
+        sub02 = superds["sub02"]
+        old_super = _head(superds["super"])
+        old_sub = _head(sub02)
+        _commit_in(sub02, "later.txt")
+        _git(superds["super"], "commit", "-qam", "record sub-02 later")
+
+        worktree = superds["wt_location"] / "wt"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="rerun",
+                              follow_parent=True, at_commit=old_super)
+
+        assert _all_ok(reports)
+        assert _head(worktree) == old_super
+        assert _head(worktree / "sub-02") == old_sub
+        assert not (worktree / "sub-02" / "later.txt").exists()
+        assert _git(worktree, "status", "--short").stdout == ""
+
+    def test_a_dataset_added_after_the_commit_is_absent(self, superds: dict):
+        """The commit defines the set: what was not there gets no worktree."""
+        before = _head(superds["super"])
+        _git(superds["super"], "-c", "protocol.file.allow=always",
+             "submodule", "add", "-q", str(superds["sub02"]), "late")
+        _git(superds["super"], "commit", "-qm", "add a late subdataset")
+
+        worktree = superds["wt_location"] / "wt"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="rerun",
+                              follow_parent=True, at_commit=before)
+
+        assert _all_ok(reports)
+        assert not (worktree / "late").exists()
+        assert not [r for r in reports if r.dataset_path == "late"]
+
+    def test_an_unresolvable_commit_refuses(self, superds: dict):
+        worktree = superds["wt_location"] / "wt"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="rerun",
+                              follow_parent=True, at_commit="deadbeef")
+
+        assert any("cannot resolve commit" in r.message for r in _failed(reports))
+        assert not worktree.exists()
+
+    def test_a_recorded_commit_the_subdataset_lacks_refuses(self, superds: dict):
+        """
+        The realistic failure: the superdataset names a subdataset commit that
+        was never fetched here. Half a hierarchy is worse than none.
+        """
+        bogus = "0" * 39 + "1"
+        _git(superds["super"], "update-index", "--add",
+             "--cacheinfo", f"160000,{bogus},sub-02")
+        _git(superds["super"], "-c", "user.email=t@e.st", "-c", "user.name=t",
+             "commit", "-qm", "record a commit nobody has")
+
+        worktree = superds["wt_location"] / "wt"
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="rerun",
+                              follow_parent=True)
+
+        failed = _failed(reports)
+        assert [r.dataset_path for r in failed] == ["sub-02"]
+        assert "not present in this subdataset" in failed[0].message
+        assert not worktree.exists()
+
+    def test_cli_flag_takes_an_optional_commit(self):
+        from datalad_worktree.cli import build_parser
+
+        p = build_parser()
+        assert p.parse_args(["add", "b", "/tmp/wt"]).follow_parent is None
+        assert p.parse_args(
+            ["add", "b", "/tmp/wt", "--follow-parent"]).follow_parent == "HEAD"
+        assert p.parse_args(
+            ["add", "b", "/tmp/wt", "--follow-parent", "4f2a91c"]
+        ).follow_parent == "4f2a91c"

@@ -1,0 +1,25 @@
+#!/bin/sh
+# Run the same lint CI runs, before the commit rather than after the push.
+#
+# Enable with:  git config core.hooksPath .githooks
+#
+# NOTE: git hooks do not fire for `jj commit` -- jujutsu runs no hooks at all.
+# If you commit with jj, use `jj lint` / `jj fix` instead; see CONTRIBUTING.md.
+
+set -e
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "pre-commit: uv not on PATH, skipping ruff" >&2
+    exit 0
+fi
+
+# Whole tree, not just staged files: ruff on this repo takes well under a
+# second, and a per-file check would miss an unused import left behind in a
+# file this commit does not touch.
+if ! uv run --dev ruff check .; then
+    echo >&2
+    echo "pre-commit: ruff found problems (this is what CI's lint job checks)." >&2
+    echo "  fix them:        uv run --dev ruff check --fix ." >&2
+    echo "  commit anyway:   git commit --no-verify" >&2
+    exit 1
+fi

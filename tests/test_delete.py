@@ -388,14 +388,15 @@ class TestDeleteRunFromInsideAWorktree:
         self, text2git_ds: Path,
     ):
         """
-        `add -f` replaces worktrees through `delete_nested_worktrees`, so the
-        same guard is what stops it deleting the dataset it was pointed at.
+        `add` replaces worktrees through `delete_nested_worktrees`, so the same
+        guard is what stops it deleting the dataset it was pointed at. Tested
+        with `discard_unmerged`, the strongest form: nothing lifts this guard.
         """
         reports = list(create_nested_worktrees(
             superds_path=text2git_ds,
             worktree_path=text2git_ds,
             branch="runs",
-            force=True,
+            discard_unmerged=True,
         ))
 
         assert not [r for r in reports if r.result == WorktreeResult.DELETED]
