@@ -47,6 +47,8 @@ All-or-nothing: a pre-flight check runs first, and if any dataset would fail (br
 
 Two steps run at the end, over all the worktrees at once: container bind-mount configuration and mtime copying. Skip them with `--no-bindpaths` / `--no-mtimes`.
 
+Only the **superdataset's** containers are configured. A container registered in a subdataset is left alone, so invoking one of those from the superdataset needs its bind paths set up by hand.
+
 ```bash
 worktree add experiment /tmp/wt
 worktree add -n experiment /tmp/wt                  # dry run
