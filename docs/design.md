@@ -48,6 +48,8 @@ It also commits one line to the tracked `.datalad/config` on the worktree branch
 
 Containers whose `cmdexec` has no `{img}` to anchor the insertion are skipped with a warning, as are containers registered without a `cmdexec`. `--no-bindpaths` skips the step.
 
+**Only the superdataset is configured** (issue #27). Two reasons. The value being written is the superdataset's *own* path, which makes it a superdataset-level concern. And the committed fallback writes `.datalad/config` on the configured dataset's branch — done in a subdataset, that moves the subdataset past the commit the superdataset just recorded, so a freshly created worktree starts out with a dirty gitlink. Verified: registering a container in a subdataset and creating worktrees used to leave ` M sub-01` in the new worktree; it now leaves it clean. The cost is that a container registered in a subdataset gets no bind paths, so invoking it from the superdataset needs them by hand.
+
 ## Mtimes
 
 Git records content, not timestamps, so every file in a fresh worktree gets the time it was checked out. For a make-style pipeline (Snakemake, Make, redo) the mtime *ordering* between inputs and outputs **is** the up-to-date state, so a new worktree looks arbitrarily stale and reruns work that is already done.

@@ -231,15 +231,42 @@ class TestConfigureWorktree:
             superds["wt_location"], "--get", "datalad.containers.mycont.cmdexec"
         ) is None
 
-    def test_configures_subdataset_worktrees(self, superds: dict):
+    def test_subdataset_containers_are_not_configured(self, superds: dict):
+        """
+        Only the superdataset is configured (issue #27).
+
+        The value written is the superdataset's own path, so it is a
+        superdataset-level concern -- and writing it into a subdataset commits
+        `.datalad/config` on that subdataset's branch, moving it past the
+        commit the superdataset just recorded and leaving the fresh worktree
+        with a dirty gitlink.
+        """
         register_container(superds["sub01"], "subcont")
-        _create(superds)
+        reports = _create(superds)
 
         sub_worktree = superds["wt_location"] / "sub-01"
-        main = superds["super"]
-        assert _git_value(sub_worktree, "--get", SUBSTITUTION_KEY) == (
-            f"-B {main}:{main}:ro"
-        )
+        assert _git_value(sub_worktree, "--get", SUBSTITUTION_KEY) is None
+        assert not [r for r in reports
+                    if r.result == WorktreeResult.CONFIGURED
+                    and r.dataset_path != "."]
+
+    def test_a_subdataset_container_leaves_the_worktree_clean(self, superds: dict):
+        """
+        The side-effect the rule above exists to prevent.
+
+        Registering the container commits inside the subdataset, which moves it
+        past the gitlink the superdataset records -- so that is recorded first,
+        making the main checkout clean. Any dirt in the fresh worktree is then
+        ours.
+        """
+        register_container(superds["sub01"], "subcont")
+        _git(superds["super"], "commit", "-qam", "record sub-01")
+        assert _git(superds["super"], "status", "--short").stdout == ""
+
+        _create(superds)
+
+        status = _git(superds["wt_location"], "status", "--short").stdout
+        assert status == "", status
 
     def test_disabled_by_flag(self, superds: dict):
         register_container(superds["super"])

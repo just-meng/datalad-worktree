@@ -585,8 +585,18 @@ def create_nested_worktrees(
             created_worktrees.append((subds.rel_path, subds.abs_path, dest_subds))
 
     # ── Configure container bind mounts ──────────────────────────────────
+    # Only the superdataset. A container registered in a *subdataset* is not
+    # configured, for two reasons: the value being written is the
+    # superdataset's own path, which is a superdataset-level concern; and
+    # writing it into a subdataset commits `.datalad/config` on that
+    # subdataset's branch, moving it past the commit the superdataset just
+    # recorded, so the new worktree would start out with a dirty gitlink.
+    # Consequence: invoking a subdataset-registered container from the
+    # superdataset needs its bind paths set up by hand. See issue #27.
     if configure_containers and not dry_run:
         for dataset_path, _source, dest in created_worktrees:
+            if dataset_path != ".":
+                continue
             yield from configure_dataset(
                 dataset_path=dataset_path,
                 worktree_path=dest,
