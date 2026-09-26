@@ -39,19 +39,67 @@ def _find_worktree_by_path(
     return None
 
 
-def is_main_worktree(repo_path: Path, worktree_path: Path) -> bool:
+def _worktree_kind(path: Path) -> str:
     """
-    Whether ``worktree_path`` is the repository's own checkout.
+    Classify ``path`` as git sees it: ``"main"``, ``"linked"`` or ``"unknown"``.
+
+    A linked worktree's git directory is ``<common-dir>/worktrees/<name>``,
+    while a main working tree's git directory *is* the common directory. So
+    comparing the two answers the question for any repository at any nesting
+    depth, without assuming anything about the layout on disk.
+
+    ``"unknown"`` means git found no repository at ``path`` -- it is missing,
+    or a plain directory outside any repo.
+
+    Two heuristics are deliberately not used. Comparing ``path`` against the
+    repository the command was resolved against only works when that
+    repository *is* the main checkout -- run from inside a worktree it makes
+    the real main checkout look linked, which deleted it. And testing whether
+    ``.git`` is a directory tests the layout rather than git's semantics, and
+    is wrong in both directions: a subdataset added with plain ``git submodule
+    add`` has a gitlink *file* there, exactly like a linked worktree (as does
+    any repo made with ``--separate-git-dir``), while inside a worktree of an
+    annexed dataset git-annex replaces that file with a *symlink* to
+    ``<main>/.git/worktrees/<name>``, which ``is_dir()`` follows.
+    """
+    result = subprocess.run(
+        [
+            "git", "-C", str(path), "rev-parse",
+            "--path-format=absolute", "--git-dir", "--git-common-dir",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return "unknown"
+
+    lines = result.stdout.splitlines()
+    if len(lines) != 2:
+        return "unknown"
+
+    try:
+        git_dir = Path(lines[0]).resolve()
+        common_dir = Path(lines[1]).resolve()
+    except OSError:
+        return "unknown"
+
+    return "main" if git_dir == common_dir else "linked"
+
+
+def is_main_worktree(path: Path) -> bool:
+    """
+    Whether ``path`` is some repository's own checkout rather than a worktree.
 
     ``git worktree list`` reports the main working tree alongside the linked
     ones, so a branch lookup can land on it -- and deleting it means deleting
-    the dataset. Since every caller resolves against the repository it is
-    operating on, the main working tree is simply ``repo_path`` itself.
+    the dataset.
+
+    Only a confirmed main working tree is refused. ``"unknown"`` is not: a
+    registration whose directory was removed by other means must stay
+    cleanable, and a path git cannot resolve is never the dataset this guard
+    protects, because a dataset is a repository by definition.
     """
-    try:
-        return worktree_path.resolve() == repo_path.resolve()
-    except OSError:
-        return False
+    return _worktree_kind(path) == "main"
 
 
 def _find_worktree_by_branch(
@@ -62,12 +110,14 @@ def _find_worktree_by_branch(
 
     The main working tree is skipped: it is the dataset, not a worktree of it,
     and `git worktree remove` refuses it -- after which the fallback below
-    would have deleted it outright.
+    would have deleted it outright. Note this holds for *any* main working
+    tree in the listing, not just ``repo_path``: run from inside a worktree,
+    the checkout it was created from appears here like any other entry.
     """
     for entry in git_worktree_list(repo_path):
         if entry.branch != branch or entry.bare:
             continue
-        if is_main_worktree(repo_path, entry.path):
+        if is_main_worktree(entry.path):
             continue
         return entry.path, entry.branch
     return None, None
@@ -80,7 +130,7 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
     falls back to deleting the directory and pruning.
     Returns error message or empty string.
     """
-    if is_main_worktree(repo_path, worktree_path):
+    if is_main_worktree(worktree_path):
         # Never reachable through the normal resolution path, which filters
         # main working trees out -- but this is the guard that makes the
         # rmtree fallback below safe, so it stays.
@@ -176,7 +226,7 @@ def resolve_delete_targets(
             else:
                 wt_path = worktree_root / dataset_path
 
-            if is_main_worktree(repo_path, wt_path):
+            if is_main_worktree(wt_path):
                 skipped.append(WorktreeReport(
                     dataset_path=dataset_path,
                     source=repo_path,
