@@ -231,6 +231,7 @@ try:
                 if report.result in (
                     WorktreeResult.CREATED,
                     WorktreeResult.CREATED_NEW_BRANCH,
+                    WorktreeResult.CREATED_RESET_BRANCH,
                     WorktreeResult.CONFIGURED,
                     WorktreeResult.MTIMES_SYNCED,
                 ):
@@ -258,6 +259,7 @@ try:
                     dataset_path=report.dataset_path,
                     branch=report.branch,
                     new_branch=report.result == WorktreeResult.CREATED_NEW_BRANCH,
+                    reset_branch=report.result == WorktreeResult.CREATED_RESET_BRANCH,
                     skip_reason=skip_reason,
                     dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
                     container_config=report.result == WorktreeResult.CONFIGURED,

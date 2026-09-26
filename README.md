@@ -35,7 +35,7 @@ worktree delete runs                    # dispose of it — or `worktree add -f`
 └── results/
 ```
 
-Each is checked out on `runs`, created from the main checkout's current state if the branch does not exist yet.
+Each is checked out on `runs`, created from that dataset's current state where the branch does not exist yet. A branch left over in only *some* datasets — what `worktree delete` leaves behind, since it keeps branches by default — is reset rather than resurrected, so a new worktree is always a fresh start. A branch that exists in *every* dataset is different: that is a state the hierarchy once recorded, so it is checked out as it stands.
 
 ## Highlights
 

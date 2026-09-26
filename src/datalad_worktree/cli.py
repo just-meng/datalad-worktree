@@ -57,13 +57,23 @@ def _render_report(report: WorktreeReport) -> None:
         if is_tty:
             # Clear the STARTING line
             print("\033[2K", end="")
-        print(f"{C.GREEN}create{C.NC} {label} -> {dest}")
+        # The branch was already there and was checked out where it stood --
+        # said out loud, because the alternative (a leftover being reset) is
+        # the other thing `add` can do with an existing branch.
+        print(f"{C.GREEN}create{C.NC} {label} -> {dest} "
+              f"{C.DIM}(existing branch){C.NC}")
     elif report.result == WorktreeResult.CREATED_NEW_BRANCH:
         if is_tty:
             print("\033[2K", end="")
         print(f"{C.GREEN}create{C.NC} {label} -> {dest} {C.DIM}(new branch){C.NC}")
+    elif report.result == WorktreeResult.CREATED_RESET_BRANCH:
+        if is_tty:
+            print("\033[2K", end="")
+        print(f"{C.GREEN}create{C.NC} {label} -> {dest} "
+              f"{C.DIM}(leftover branch reset){C.NC}")
     elif report.result == WorktreeResult.SKIPPED_DRY_RUN:
-        print(f"{C.GREEN}create{C.NC} {C.DIM}[DRY-RUN]{C.NC} {label} -> {dest}")
+        note = f" {C.DIM}({report.message}){C.NC}" if report.message else ""
+        print(f"{C.GREEN}create{C.NC} {C.DIM}[DRY-RUN]{C.NC} {label} -> {dest}{note}")
     elif report.result in (
         WorktreeResult.SKIPPED_NOT_INSTALLED,
         WorktreeResult.SKIPPED_NOT_GIT_REPO,
@@ -247,6 +257,7 @@ def _cmd_add(args) -> int:
             if report.result in (
                 WorktreeResult.CREATED,
                 WorktreeResult.CREATED_NEW_BRANCH,
+                WorktreeResult.CREATED_RESET_BRANCH,
             ):
                 created += 1
             elif report.result in (
