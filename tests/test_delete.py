@@ -231,8 +231,51 @@ def text2git_ds(tmp_path: Path) -> Path:
 
 class TestMainWorktreeIsNeverDeleted:
     def test_is_main_worktree_identifies_the_checkout(self, text2git_ds: Path):
-        assert is_main_worktree(text2git_ds, text2git_ds) is True
-        assert is_main_worktree(text2git_ds, text2git_ds / "sub") is False
+        assert is_main_worktree(text2git_ds) is True
+
+    def test_a_path_git_cannot_resolve_is_not_main(self, text2git_ds: Path):
+        """`unknown`, not `main`: a stale registration must stay cleanable."""
+        assert is_main_worktree(text2git_ds / "nope") is False
+
+    def test_a_linked_worktree_is_not_main(self, text2git_ds: Path):
+        wt = text2git_ds.parent / "wt-linked"
+        list(create_nested_worktrees(
+            superds_path=text2git_ds, worktree_path=wt, branch="runs",
+        ))
+        assert is_main_worktree(wt) is False
+
+    def test_gitlink_file_at_a_main_checkout_is_still_main(self, tmp_path: Path):
+        """
+        Classification must read git's semantics, not the layout on disk.
+
+        A subdataset added with plain `git submodule add` has a gitlink *file*
+        at `.git`, exactly like a linked worktree -- so a `.git`-is-a-directory
+        test would call this main checkout a worktree and delete it. DataLad
+        keeps subdataset git dirs in place, which is why the DataLad fixtures
+        above cannot catch that.
+        """
+        ident = ("-c", "user.email=t@e.st", "-c", "user.name=test")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        _git(sub, "init", "-q")
+        (sub / "run.py").write_text("x\n")
+        _git(sub, "add", "-A")
+        _git(sub, *ident, "commit", "-qm", "init")
+
+        super_ = tmp_path / "super"
+        super_.mkdir()
+        _git(super_, "init", "-q")
+        (super_ / "README").write_text("x\n")
+        _git(super_, "add", "-A")
+        _git(super_, *ident, "commit", "-qm", "init")
+        _git(
+            super_, "-c", "protocol.file.allow=always",
+            "submodule", "add", "-q", str(sub), "code",
+        )
+        _git(super_, *ident, "commit", "-qm", "add sub")
+
+        assert (super_ / "code" / ".git").is_file()   # the trap
+        assert is_main_worktree(super_ / "code") is True
 
     def test_branch_lookup_skips_the_main_worktree(self, text2git_ds: Path):
         """`git worktree list` reports it, so the lookup must filter it out."""
@@ -282,3 +325,79 @@ class TestMainWorktreeIsNeverDeleted:
 
         assert any(r.result == WorktreeResult.DELETED for r in reports)
         assert not worktree.exists()
+
+
+class TestDeleteRunFromInsideAWorktree:
+    """
+    The guard has to hold when the command is resolved against a worktree.
+
+    Standing in a worktree, the checkout it was created from is just another
+    entry in `git worktree list`. Identifying the main working tree as "the
+    repository this command was resolved against" therefore classified the
+    real main checkout as linked, and the rmtree fallback deleted the dataset.
+    """
+
+    @pytest.fixture()
+    def wt(self, text2git_ds: Path) -> Path:
+        wt_path = text2git_ds.parent / "wt-runs"
+        reports = list(create_nested_worktrees(
+            superds_path=text2git_ds, worktree_path=wt_path, branch="runs",
+        ))
+        assert not [r for r in reports if r.result == WorktreeResult.FAILED]
+        return wt_path
+
+    def test_branch_mode_refuses_the_main_checkout(
+        self, text2git_ds: Path, wt: Path,
+    ):
+        main_branch = _git(text2git_ds, "branch", "--show-current").stdout.strip()
+
+        reports = list(delete_nested_worktrees(
+            superds_path=wt, target=main_branch,
+        ))
+
+        assert not [r for r in reports if r.result == WorktreeResult.DELETED]
+        assert (text2git_ds / "precious.txt").exists()
+        assert (text2git_ds / ".git").exists()
+
+    def test_path_mode_refuses_the_main_checkout(
+        self, text2git_ds: Path, wt: Path,
+    ):
+        reports = list(delete_nested_worktrees(
+            superds_path=wt, target=str(text2git_ds),
+        ))
+
+        assert any("main working tree" in r.message for r in reports)
+        assert not [r for r in reports if r.result == WorktreeResult.DELETED]
+        assert (text2git_ds / "precious.txt").exists()
+
+    def test_a_sibling_worktree_still_deletes(self, text2git_ds: Path, wt: Path):
+        """The guard must not block deleting a worktree from another one."""
+        sibling = text2git_ds.parent / "wt-other"
+        list(create_nested_worktrees(
+            superds_path=text2git_ds, worktree_path=sibling, branch="other",
+        ))
+
+        reports = list(delete_nested_worktrees(superds_path=wt, target="other"))
+
+        assert any(r.result == WorktreeResult.DELETED for r in reports)
+        assert not sibling.exists()
+        assert (text2git_ds / "precious.txt").exists()
+        assert wt.exists()
+
+    def test_add_force_pointed_at_the_main_checkout_does_not_destroy_it(
+        self, text2git_ds: Path,
+    ):
+        """
+        `add -f` replaces worktrees through `delete_nested_worktrees`, so the
+        same guard is what stops it deleting the dataset it was pointed at.
+        """
+        reports = list(create_nested_worktrees(
+            superds_path=text2git_ds,
+            worktree_path=text2git_ds,
+            branch="runs",
+            force=True,
+        ))
+
+        assert not [r for r in reports if r.result == WorktreeResult.DELETED]
+        assert (text2git_ds / "precious.txt").exists()
+        assert (text2git_ds / ".git").exists()
