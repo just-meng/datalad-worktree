@@ -32,7 +32,16 @@ worktree add <branch> <worktree-path> [options]
   -d, --dataset <path>      superdataset root (default: current directory)
 ```
 
-Creates a worktree for the superdataset and every installed subdataset, on `branch`, creating the branch from each dataset's current HEAD where it does not exist. Subdatasets that are not installed are skipped.
+Creates a worktree for the superdataset and every installed subdataset, on `branch`. Subdatasets that are not installed are skipped.
+
+Where the branch does not exist it is created from that dataset's current HEAD. Where it exists, what happens depends on whether it exists *everywhere*:
+
+- **In only some datasets** — a leftover, since `worktree delete` keeps branches by default. It is reset to that dataset's current HEAD, reported as `(leftover branch reset)`, so the worktree is a fresh start rather than a hybrid of the last run and the present. Refused instead, changing nothing, if that branch holds commits its checkout lacks — a finished run whose results were never fetched, or a branch you created in one dataset on purpose. Then either `worktree fetch` it first, give the branch to every dataset, or `-F` to reset it and discard those commits.
+- **In every dataset** — a state the hierarchy once recorded, since the superdataset commit names the subdataset commits belonging with it. Checked out as it stands, reported as `(existing branch)`.
+
+So each line says which happened: `(new branch)`, `(existing branch)`, or `(leftover branch reset)`.
+
+`--no-create-branch` asks for the branch as it stands, so it never resets and fails on datasets that lack it.
 
 All-or-nothing: a pre-flight check runs first, and if any dataset would fail (branch already checked out elsewhere, destination path occupied) nothing is created. A subdataset that fails during creation does not abort the rest; a superdataset failure does.
 
