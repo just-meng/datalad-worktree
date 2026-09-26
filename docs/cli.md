@@ -23,6 +23,10 @@ worktree add <branch> <worktree-path> [options]
   -n, --dry-run             show what would be done without doing it
   -f, --force               replace an existing worktree even if it holds
                             commits the main checkout lacks, discarding them
+  --follow-parent [<commit>]
+                            take each subdataset's state from the commit its
+                            parent records, not from the branch name; with a
+                            commit, mirror the whole state it recorded
   --no-create-branch        only checkout existing branches, don't create new ones
   --no-bindpaths            don't configure container bind mounts
   --no-mtimes               don't copy file mtimes from the source working trees
@@ -39,6 +43,19 @@ Where the branch does not exist it is created from that dataset's current HEAD. 
 So each line says which happened: `(new branch)`, `(existing branch)`, or `(leftover branch reset)`.
 
 `--no-create-branch` asks for the branch as it stands, so it never resets and fails on datasets that lack it.
+
+### `--follow-parent`: one recorded state instead of one branch name
+
+By default each dataset resolves `branch` for itself, so a subdataset ends up at *its* branch tip — which is not necessarily the commit the superdataset records for it. `--follow-parent` takes each subdataset's state from what its parent records instead, so the worktrees reproduce one consistent state of the hierarchy:
+
+```bash
+worktree add runs /tmp/wt --follow-parent            # follow the superdataset as it is now
+worktree add rerun /tmp/wt --follow-parent 4f2a91c   # mirror the project as that commit recorded it
+```
+
+With a commit — a `datalad run` record, say — the commit also defines the *set* of datasets: one added since is absent, and one recorded then is included even if the checkout has moved on. `branch` is still created in every dataset, at the resolved commit, so the snapshot is something you can work and commit in.
+
+It refuses, creating nothing, if the commit cannot be resolved, or if a recorded commit is not an object the subdataset actually has — the realistic case being that it was never fetched there. Without that check git fails partway, after the superdataset worktree already exists. A dataset the commit records but the checkout does not have is reported as not installed and skipped.
 
 All-or-nothing: a pre-flight check runs first, and if any dataset would fail (branch already checked out elsewhere, destination path occupied) nothing is created. A subdataset that fails during creation does not abort the rest; a superdataset failure does.
 

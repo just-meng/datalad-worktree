@@ -146,6 +146,17 @@ def build_parser():
              "checkout lacks, discarding them (default: replace only when "
              "there is nothing to lose)",
     )
+    # One flag, not two (issue #29): "follow the parent" is the behaviour, and
+    # the optional commit is which state of the parent to follow. Bare, it
+    # follows the superdataset as it is now; with a commit, the whole hierarchy
+    # mirrors the project as that commit recorded it.
+    add_p.add_argument(
+        "--follow-parent", nargs="?", const="HEAD", default=None,
+        metavar="<commit>",
+        help="take each subdataset's state from the commit its parent records "
+             "instead of from the branch name; with a commit, put the "
+             "superdataset there too and mirror that whole state",
+    )
     add_p.add_argument(
         "--no-create-branch", action="store_true", default=False,
         help="don't create new branches; only checkout existing ones",
@@ -245,6 +256,9 @@ def _cmd_add(args) -> int:
             branch=args.branch,
             create_branch=not args.no_create_branch,
             discard_unmerged=args.force,
+            follow_parent=args.follow_parent is not None,
+            at_commit=(None if args.follow_parent in (None, "HEAD")
+                       else args.follow_parent),
             dry_run=args.dry_run,
             configure_containers=not args.no_bindpaths,
             preserve_mtimes=not args.no_mtimes,

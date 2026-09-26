@@ -141,6 +141,17 @@ try:
                 doc="Path to the superdataset (default: current directory)",
                 constraints=EnsureStr() | EnsureNone(),
             ),
+            follow_parent=Parameter(
+                args=("--follow-parent",),
+                doc="""Take each subdataset's state from the commit its parent
+                records instead of from the branch name. Given a commit, put
+                the superdataset there too, so the whole hierarchy mirrors the
+                state that commit recorded""",
+                nargs="?",
+                const="HEAD",
+                default=None,
+                metavar="COMMIT",
+            ),
             no_create_branch=Parameter(
                 args=("--no-create-branch",),
                 doc="Fail if the branch doesn't exist instead of creating it",
@@ -186,6 +197,7 @@ try:
             dataset=None,
             no_create_branch=False,
             force=False,
+            follow_parent=None,
             dry_run=False,
             no_bindpaths=False,
             no_mtimes=False,
@@ -210,6 +222,9 @@ try:
                 branch=branch,
                 create_branch=not no_create_branch,
                 discard_unmerged=force,
+                follow_parent=follow_parent is not None,
+                at_commit=(None if follow_parent in (None, "HEAD")
+                           else follow_parent),
                 dry_run=dry_run,
                 configure_containers=not no_bindpaths,
                 preserve_mtimes=not no_mtimes,
