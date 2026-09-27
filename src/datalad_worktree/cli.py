@@ -57,13 +57,23 @@ def _render_report(report: WorktreeReport) -> None:
         if is_tty:
             # Clear the STARTING line
             print("\033[2K", end="")
-        print(f"{C.GREEN}create{C.NC} {label} -> {dest}")
+        # The branch was already there and was checked out where it stood --
+        # said out loud, because the alternative (a leftover being reset) is
+        # the other thing `add` can do with an existing branch.
+        print(f"{C.GREEN}create{C.NC} {label} -> {dest} "
+              f"{C.DIM}(existing branch){C.NC}")
     elif report.result == WorktreeResult.CREATED_NEW_BRANCH:
         if is_tty:
             print("\033[2K", end="")
         print(f"{C.GREEN}create{C.NC} {label} -> {dest} {C.DIM}(new branch){C.NC}")
+    elif report.result == WorktreeResult.CREATED_RESET_BRANCH:
+        if is_tty:
+            print("\033[2K", end="")
+        print(f"{C.GREEN}create{C.NC} {label} -> {dest} "
+              f"{C.DIM}(leftover branch reset){C.NC}")
     elif report.result == WorktreeResult.SKIPPED_DRY_RUN:
-        print(f"{C.GREEN}create{C.NC} {C.DIM}[DRY-RUN]{C.NC} {label} -> {dest}")
+        note = f" {C.DIM}({report.message}){C.NC}" if report.message else ""
+        print(f"{C.GREEN}create{C.NC} {C.DIM}[DRY-RUN]{C.NC} {label} -> {dest}{note}")
     elif report.result in (
         WorktreeResult.SKIPPED_NOT_INSTALLED,
         WorktreeResult.SKIPPED_NOT_GIT_REPO,
@@ -127,14 +137,25 @@ def build_parser():
         "-n", "--dry-run", action="store_true", default=False,
         help="show what would be done without doing it",
     )
+    # A worktree already at the destination is replaced by default (issue
+    # #28): worktrees are ephemeral, and keeping one that is merged or behind
+    # buys nothing but stale mtimes. -f is only needed to discard work.
     add_p.add_argument(
         "-f", "--force", action="store_true", default=False,
-        help="replace worktrees that already exist at the destination; "
-             "refuses if any still holds unmerged work",
+        help="replace an existing worktree even if it holds commits the main "
+             "checkout lacks, discarding them (default: replace only when "
+             "there is nothing to lose)",
     )
+    # One flag, not two (issue #29): "follow the parent" is the behaviour, and
+    # the optional commit is which state of the parent to follow. Bare, it
+    # follows the superdataset as it is now; with a commit, the whole hierarchy
+    # mirrors the project as that commit recorded it.
     add_p.add_argument(
-        "-F", "--force-unmerged", action="store_true", default=False,
-        help="replace them even if they hold unmerged work (implies --force)",
+        "--follow-parent", nargs="?", const="HEAD", default=None,
+        metavar="<commit>",
+        help="take each subdataset's state from the commit its parent records "
+             "instead of from the branch name; with a commit, put the "
+             "superdataset there too and mirror that whole state",
     )
     add_p.add_argument(
         "--no-create-branch", action="store_true", default=False,
@@ -234,8 +255,10 @@ def _cmd_add(args) -> int:
             worktree_path=worktree_path,
             branch=args.branch,
             create_branch=not args.no_create_branch,
-            force=args.force or args.force_unmerged,
-            force_unmerged=args.force_unmerged,
+            discard_unmerged=args.force,
+            follow_parent=args.follow_parent is not None,
+            at_commit=(None if args.follow_parent in (None, "HEAD")
+                       else args.follow_parent),
             dry_run=args.dry_run,
             configure_containers=not args.no_bindpaths,
             preserve_mtimes=not args.no_mtimes,
@@ -247,6 +270,7 @@ def _cmd_add(args) -> int:
             if report.result in (
                 WorktreeResult.CREATED,
                 WorktreeResult.CREATED_NEW_BRANCH,
+                WorktreeResult.CREATED_RESET_BRANCH,
             ):
                 created += 1
             elif report.result in (

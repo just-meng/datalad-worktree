@@ -20,7 +20,13 @@ from datalad_worktree.core import (
     git_worktree_list,
     validate_superds,
 )
-from datalad_worktree.discovery import SubDataset, discover_subdatasets, is_git_repo
+from datalad_worktree.discovery import (
+    SubDataset,
+    commit_present,
+    discover_subdatasets,
+    is_git_repo,
+    recorded_hierarchy,
+)
 from datalad_worktree.fetch import fast_forward_state
 from datalad_worktree.mtimes import sync_dataset
 
@@ -33,6 +39,8 @@ def _git_worktree_add(
     branch: str,
     create_branch: bool = True,
     force: bool = False,
+    reset_branch: bool = False,
+    start_point: str | None = None,
 ) -> tuple[WorktreeResult, str]:
     """Run `git worktree add` for a single repository."""
     cmd = ["git", "-C", str(repo_path), "worktree", "add"]
@@ -40,7 +48,20 @@ def _git_worktree_add(
     if force:
         cmd.append("--force")
 
-    if git_branch_exists(repo_path, branch):
+    if start_point is not None:
+        # An explicit commit to land on (--follow-parent). The branch is placed
+        # there whether or not it already exists: the point of the flag is the
+        # commit, not wherever the branch happens to sit.
+        flag = "-B" if git_branch_exists(repo_path, branch) else "-b"
+        cmd.extend([flag, branch, str(dest_path), start_point])
+        result_type = (WorktreeResult.CREATED_RESET_BRANCH if flag == "-B"
+                       else WorktreeResult.CREATED_NEW_BRANCH)
+    elif reset_branch:
+        # -B moves the branch to this checkout's HEAD instead of checking it
+        # out where it happens to sit. See branches_to_reset().
+        cmd.extend(["-B", branch, str(dest_path)])
+        result_type = WorktreeResult.CREATED_RESET_BRANCH
+    elif git_branch_exists(repo_path, branch):
         cmd.extend([str(dest_path), branch])
         result_type = WorktreeResult.CREATED
     elif create_branch:
@@ -136,14 +157,109 @@ def existing_worktrees(
     return found
 
 
+def branch_presence(
+    superds_path: Path,
+    branch: str,
+    subdatasets: list[SubDataset],
+) -> list[tuple[str, Path, bool]]:
+    """
+    ``(dataset_path, repo, whether branch exists there)`` per dataset.
+
+    Covers exactly the datasets a worktree will be created for: the
+    superdataset and every installed subdataset.
+    """
+    rows = [(".", superds_path, git_branch_exists(superds_path, branch))]
+    rows += [
+        (s.rel_path, s.abs_path, git_branch_exists(s.abs_path, branch))
+        for s in subdatasets if s.installed and is_git_repo(s.abs_path)
+    ]
+    return rows
+
+
+def branches_to_reset(rows: list[tuple[str, Path, bool]]) -> set[str]:
+    """
+    Which datasets hold a leftover branch rather than part of a recorded state.
+
+    A branch present in *every* dataset describes one state of the whole
+    hierarchy -- the superdataset's commit names the subdataset commits that go
+    with it -- so checking it out is a deliberate thing to do, and it is left
+    alone. A branch present in only *some* of them cannot describe a state:
+    the datasets that lack it would get a fresh branch off their current HEAD
+    while the others returned to wherever the last run left them, which is a
+    hierarchy nobody chose. Those leftovers are reset to their dataset's
+    current HEAD, which is what makes a new worktree a fresh start.
+
+    Note that "present everywhere" does not guarantee the recorded state is
+    *self-consistent*: a subdataset branch whose tip moved past the commit the
+    superdataset's branch records yields a worktree with a dirty gitlink. That
+    is visible in `git status` and is not repaired here -- re-saving the
+    superdataset is the fix.
+    """
+    present = {dataset_path for dataset_path, _repo, has in rows if has}
+    if not present or len(present) == len(rows):
+        return set()
+    return present
+
+
+def branch_beyond_head(repo_path: Path, branch: str) -> int | None:
+    """
+    How many commits ``branch`` holds that ``HEAD`` does not.
+
+    ``None`` when git cannot say, which callers treat like unmerged work: a
+    reset moves the branch pointer, so refusing on an unanswered question is
+    the safe direction.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "rev-list", "--count", f"HEAD..{branch}"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def unmerged_branches(
+    rows: list[tuple[str, Path, bool]],
+    to_reset: set[str],
+    branch: str,
+) -> list[tuple[str, str]]:
+    """
+    Which branches about to be reset still hold commits their checkout lacks.
+
+    That is a finished run whose results were never fetched, so resetting the
+    branch would orphan them. Refused unless ``--force``.
+    """
+    blocked: list[tuple[str, str]] = []
+    for dataset_path, repo, _has in rows:
+        if dataset_path not in to_reset:
+            continue
+        ahead = branch_beyond_head(repo, branch)
+        if ahead == 0:
+            continue
+        detail = (
+            f"holds {ahead} commit(s) this checkout lacks" if ahead
+            else "may hold commits this checkout lacks (git could not say)"
+        )
+        blocked.append((
+            dataset_path,
+            f"branch '{branch}' {detail}; fetch them first, "
+            f"or use --force to reset it anyway",
+        ))
+    return blocked
+
+
 def unmerged_worktrees(
     existing: list[tuple[str, Path, Path]],
 ) -> list[tuple[str, str]]:
     """
     Which existing worktrees still hold commits the main checkout lacks.
 
-    Replacing one of those throws work away, so ``--force`` refuses and
-    ``--force-unmerged`` is required. Merged means the worktree's tip is
+    Replacing one of those throws work away, so the default replacement
+    refuses and ``--force`` is required. Merged means the worktree's tip is
     contained in its main checkout's HEAD -- ``up-to-date`` or ``behind`` --
     which is the state a ``worktree fetch`` leaves behind. A detached HEAD
     counts as unmerged, since there is no branch to reason about.
@@ -160,7 +276,7 @@ def unmerged_worktrees(
         unmerged.append((
             dataset_path,
             f"{worktree} still holds unmerged work ({detail}); "
-            f"fetch it first, or use --force-unmerged to discard it",
+            f"fetch it first, or use --force to discard it",
         ))
     return unmerged
 
@@ -234,8 +350,10 @@ def create_nested_worktrees(
     worktree_path: Path,
     branch: str,
     create_branch: bool = True,
-    force: bool = False,
-    force_unmerged: bool = False,
+    replace: bool = True,
+    discard_unmerged: bool = False,
+    follow_parent: bool = False,
+    at_commit: str | None = None,
     dry_run: bool = False,
     configure_containers: bool = True,
     preserve_mtimes: bool = True,
@@ -247,12 +365,24 @@ def create_nested_worktrees(
     dataset would fail (e.g. branch already checked out elsewhere), no
     worktrees are created and errors are yielded as FAILED reports.
 
-    ``force`` replaces worktrees that already exist at the destination,
-    deleting their branches too so the recreate starts from the main
-    checkout's state -- worktrees are meant to be disposable. It refuses,
-    changing nothing, if any of them still holds commits the main checkout
-    lacks; ``force_unmerged`` discards those as well. Uncommitted changes are
-    always discarded, as ``worktree delete --force`` does.
+    ``replace`` (on by default, issue #28) replaces a worktree that already
+    exists at the destination, deleting its branch too so the recreate starts
+    from the main checkout's state -- worktrees are meant to be disposable, and
+    keeping one that is merged or behind buys nothing but stale mtimes. It
+    refuses, changing nothing, if the worktree still holds commits the main
+    checkout lacks; ``discard_unmerged`` (the CLI's ``-f``) discards those as
+    well. Uncommitted changes are always discarded, as ``worktree delete
+    --force`` does. Only paths git reports as worktrees are replaced, so a
+    stray directory at the destination is still an error.
+
+    ``follow_parent`` (issue #29) takes each subdataset's state from the commit
+    its parent records instead of looking for ``branch`` in it, so the worktrees
+    reproduce one consistent state of the hierarchy rather than one branch name
+    per dataset. ``at_commit`` additionally puts the superdataset on that
+    commit -- a `datalad run` record, say -- and then the whole hierarchy
+    mirrors the project as it was then. With ``at_commit`` the *set* of
+    datasets comes from that commit too: one added since is absent, and one
+    recorded then is included even if the checkout has moved on.
 
     Unless ``configure_containers`` is False, every created worktree that
     registers a container gets bind-mount configuration so that
@@ -283,17 +413,46 @@ def create_nested_worktrees(
     created_worktrees: list[tuple[str, Path, Path]] = []
 
     # ── Discover subdatasets ─────────────────────────────────────────────
-    subdatasets = discover_subdatasets(superds_path)
+    # Without --follow-parent the hierarchy is the one in the checkout. With
+    # it, each subdataset's state -- and with a commit, the very set of them --
+    # comes from what the parent dataset records. See recorded_hierarchy().
+    start_points: dict[str, str] = {}
+    unavailable: list[tuple[str, str]] = []
+    if follow_parent:
+        superds_commit = at_commit or "HEAD"
+        recorded = recorded_hierarchy(superds_path, superds_commit)
+        subdatasets = [
+            SubDataset(
+                rel_path=r.rel_path,
+                abs_path=r.abs_path,
+                installed=r.available,
+                depth=r.depth,
+            )
+            for r in recorded
+        ]
+        for r in recorded:
+            if r.available:
+                start_points[r.rel_path] = r.commit
+            else:
+                unavailable.append((
+                    r.rel_path,
+                    f"recorded at {r.commit[:8]} by '{r.parent}' but not "
+                    f"installed here",
+                ))
+        if at_commit is not None:
+            start_points["."] = at_commit
+    else:
+        subdatasets = discover_subdatasets(superds_path)
 
     # ── Replace an existing worktree ─────────────────────────────────────
     # Done before the pre-flight so that the path and branch conflicts it
     # would otherwise report are already gone.
     replaced_root: Path | None = None
-    if force or force_unmerged:
+    if replace or discard_unmerged:
         existing = existing_worktrees(superds_path, worktree_root, subdatasets)
         if existing:
             replaced_root = worktree_root
-            if not force_unmerged:
+            if not discard_unmerged:
                 blocked = unmerged_worktrees(existing)
                 if blocked:
                     for dataset_path, message in blocked:
@@ -325,6 +484,75 @@ def create_nested_worktrees(
                     force=True,
                 )
 
+    # ── --follow-parent pre-flight ───────────────────────────────────────
+    # Refuse before creating anything if the commit cannot be resolved, or if a
+    # recorded commit is not an object the subdataset actually has -- that is
+    # the realistic failure (it was never fetched there), and half a hierarchy
+    # is worse than none.
+    if follow_parent:
+        if at_commit is not None and not commit_present(superds_path, at_commit):
+            yield WorktreeReport(
+                dataset_path=".",
+                source=superds_path,
+                destination=worktree_root,
+                result=WorktreeResult.FAILED,
+                branch=branch,
+                message=f"cannot resolve commit '{at_commit}' in this dataset",
+            )
+            return
+        missing = [
+            (rel, commit) for rel, commit in start_points.items()
+            if rel != "." and not commit_present(superds_path / rel, commit)
+        ]
+        if missing:
+            for rel, commit in missing:
+                yield WorktreeReport(
+                    dataset_path=rel,
+                    source=superds_path / rel,
+                    destination=worktree_root / rel,
+                    result=WorktreeResult.FAILED,
+                    branch=branch,
+                    message=(f"recorded commit {commit[:8]} is not present in "
+                             f"this subdataset; fetch it first"),
+                )
+            return
+        for rel, why in unavailable:
+            yield WorktreeReport(
+                dataset_path=rel,
+                source=superds_path / rel,
+                destination=worktree_root / rel,
+                result=WorktreeResult.SKIPPED_NOT_INSTALLED,
+                branch=branch,
+                message=why,
+            )
+
+    # ── Leftover branches from an earlier run ────────────────────────────
+    # Decided across the whole hierarchy, before anything is created, so that
+    # the pre-flight and the dry run can both report it. --no-create-branch
+    # asks for the branch as it stands, so it never resets.
+    presence = branch_presence(superds_path, branch, subdatasets)
+    if follow_parent:
+        # Every existing branch will be moved to a recorded commit, so the
+        # unmerged-work guard has to consider all of them, not just the
+        # ones the some/all rule would have reset.
+        to_reset = {d for d, _repo, has in presence if has}
+    else:
+        to_reset = branches_to_reset(presence) if create_branch else set()
+
+    if to_reset and not discard_unmerged:
+        blocked = unmerged_branches(presence, to_reset, branch)
+        if blocked:
+            for dataset_path, message in blocked:
+                yield WorktreeReport(
+                    dataset_path=dataset_path,
+                    source=superds_path if dataset_path == "." else superds_path / dataset_path,
+                    destination=worktree_root if dataset_path == "." else worktree_root / dataset_path,
+                    result=WorktreeResult.FAILED,
+                    branch=branch,
+                    message=message,
+                )
+            return
+
     # ── Pre-flight check ─────────────────────────────────────────────────
     if not dry_run:
         errors = _preflight_check(
@@ -345,6 +573,12 @@ def create_nested_worktrees(
                 )
             return
 
+    def reset_note(dataset_path: str) -> str:
+        """Dry-run message, so `-n` says when a branch would be moved."""
+        if dataset_path not in to_reset:
+            return ""
+        return f"would reset leftover branch '{branch}' to this checkout's HEAD"
+
     # ── Create super dataset worktree ────────────────────────────────────
     if dry_run:
         yield WorktreeReport(
@@ -353,6 +587,7 @@ def create_nested_worktrees(
             destination=worktree_root,
             result=WorktreeResult.SKIPPED_DRY_RUN,
             branch=branch,
+            message=reset_note("."),
         )
     else:
         yield WorktreeReport(
@@ -370,7 +605,9 @@ def create_nested_worktrees(
             dest_path=worktree_root,
             branch=branch,
             create_branch=create_branch,
-            force=force,
+            force=discard_unmerged,
+            reset_branch="." in to_reset,
+            start_point=start_points.get("."),
         )
         yield WorktreeReport(
             dataset_path=".",
@@ -419,6 +656,7 @@ def create_nested_worktrees(
                 destination=dest_subds,
                 result=WorktreeResult.SKIPPED_DRY_RUN,
                 branch=branch,
+                message=reset_note(subds.rel_path),
             )
             continue
 
@@ -437,7 +675,9 @@ def create_nested_worktrees(
             dest_path=dest_subds,
             branch=branch,
             create_branch=create_branch,
-            force=force,
+            force=discard_unmerged,
+            reset_branch=subds.rel_path in to_reset,
+            start_point=start_points.get(subds.rel_path),
         )
 
         yield WorktreeReport(
@@ -453,8 +693,18 @@ def create_nested_worktrees(
             created_worktrees.append((subds.rel_path, subds.abs_path, dest_subds))
 
     # ── Configure container bind mounts ──────────────────────────────────
+    # Only the superdataset. A container registered in a *subdataset* is not
+    # configured, for two reasons: the value being written is the
+    # superdataset's own path, which is a superdataset-level concern; and
+    # writing it into a subdataset commits `.datalad/config` on that
+    # subdataset's branch, moving it past the commit the superdataset just
+    # recorded, so the new worktree would start out with a dirty gitlink.
+    # Consequence: invoking a subdataset-registered container from the
+    # superdataset needs its bind paths set up by hand. See issue #27.
     if configure_containers and not dry_run:
         for dataset_path, _source, dest in created_worktrees:
+            if dataset_path != ".":
+                continue
             yield from configure_dataset(
                 dataset_path=dataset_path,
                 worktree_path=dest,

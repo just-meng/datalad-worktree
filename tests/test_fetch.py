@@ -209,7 +209,10 @@ class TestBehindIsNotDivergence:
         assert not [r for r in reports if r.result == WorktreeResult.FAILED]
         skipped = [r for r in reports
                    if r.result == WorktreeResult.SKIPPED_UP_TO_DATE]
-        assert any(r.dataset_path == "derived" and "nothing to ship" in r.message
+        # "ahead", not "already up to date": both skip, but only one of them
+        # means the worktree had nothing to ship. Matching the discriminating
+        # word rather than the whole sentence keeps this robust to rewording.
+        assert any(r.dataset_path == "derived" and "ahead" in r.message
                    for r in skipped)
 
 

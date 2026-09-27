@@ -384,7 +384,7 @@ def fetch_nested_worktrees(
             # consumed -- a `code/` subdataset developed further in the main
             # checkout while the run was going on. Nothing to bring in.
             message = ("already up to date" if state == "up-to-date"
-                       else "nothing to ship; this checkout is ahead")
+                       else "this checkout is ahead")
             yield report(pair, WorktreeResult.SKIPPED_UP_TO_DATE, branch, message)
             continue
 
@@ -417,7 +417,7 @@ def fetch_nested_worktrees(
             return
 
         yield report(pair, WorktreeResult.FETCHED, branch,
-                     f"{ahead} commits from '{branch}' ({how})")
+                     f"{how} {ahead} commits from '{branch}'")
 
     # ── Refresh mtimes from the worktree ────────────────────────────────
     # Reversed direction: the worktree is the reference, the main checkout is
