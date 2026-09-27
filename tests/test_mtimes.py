@@ -322,6 +322,11 @@ class TestSafety:
         worktree does not have.
         """
         superds = pipeline_ds["super"]
+        # The branch has to exist in *every* dataset, otherwise `add` reads it
+        # as a leftover from an earlier run: present in only some datasets and
+        # holding a commit the checkout lacks is refused, not checked out.
+        # See branches_to_reset() in add.py.
+        _git(pipeline_ds["code"], "branch", "variant")
         _git(superds, "checkout", "-q", "-b", "variant")
         _git(superds, "annex", "unlock", "out.txt")
         (superds / "out.txt").write_text("a different result\n")
