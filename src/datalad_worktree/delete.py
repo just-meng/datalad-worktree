@@ -202,6 +202,53 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
     return result.stderr.strip()
 
 
+def _predict(
+    targets: list[DeleteTarget], delete_branch: bool, force: bool,
+) -> Iterator[WorktreeReport]:
+    """
+    What deleting ``targets`` would do, refusals included, without doing it.
+
+    Checked with the real run's own tests: a worktree with local changes is
+    refused without ``force``, and so is a branch ``git branch -d`` would call
+    unmerged -- approximated as not an ancestor of the checkout's HEAD.
+    Children are still present here, so a dirty one shows in its parent's
+    status and the parent is refused too, as it would be.
+    """
+    for t in targets:
+        def report(result: WorktreeResult, message: str) -> WorktreeReport:
+            return WorktreeReport(
+                dataset_path=t.dataset_path, source=t.repo_path,
+                destination=t.worktree_path, result=result,
+                branch=t.branch, message=message,
+            )
+
+        if not force and _has_local_changes(Path(t.worktree_path)):
+            yield report(
+                WorktreeResult.FAILED,
+                f"{t.worktree_path} has uncommitted or untracked changes; "
+                f"commit them, or use --force to discard them",
+            )
+            continue
+        yield report(WorktreeResult.SKIPPED_DRY_RUN, "would delete")
+
+        if not (delete_branch and t.branch):
+            continue
+        merged = subprocess.run(
+            ["git", "-C", str(t.repo_path), "merge-base", "--is-ancestor",
+             t.branch, "HEAD"],
+            capture_output=True, text=True,
+        ).returncode == 0
+        if merged or force:
+            yield report(WorktreeResult.SKIPPED_DRY_RUN,
+                         f"would delete branch '{t.branch}'")
+        else:
+            yield report(
+                WorktreeResult.FAILED,
+                f"branch '{t.branch}' is not fully merged and would be kept; "
+                f"--force deletes it",
+            )
+
+
 def _git_branch_delete(repo_path: Path, branch: str, force: bool = False) -> str:
     """
     Delete a branch. Uses -d (safe) by default, -D (force) if force=True.
@@ -320,6 +367,7 @@ def delete_nested_worktrees(
     target: str,
     delete_branch: bool = True,
     force: bool = False,
+    dry_run: bool = False,
 ) -> Iterator[WorktreeReport]:
     """
     Delete nested worktrees by path or branch name.
@@ -353,6 +401,10 @@ def delete_nested_worktrees(
 
     # Yield skipped reports
     yield from skipped
+
+    if dry_run:
+        yield from _predict(targets, delete_branch, force)
+        return
 
     # Delete each target
     for t in targets:

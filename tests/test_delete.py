@@ -434,3 +434,50 @@ class TestDeleteRunFromInsideAWorktree:
         assert not [r for r in reports if r.result == WorktreeResult.DELETED]
         assert (text2git_ds / "precious.txt").exists()
         assert (text2git_ds / ".git").exists()
+
+
+class TestDeleteDryRun:
+    """-n reports what delete would do, refusals included, and changes nothing."""
+
+    def test_changes_nothing(self, superds: dict):
+        wt_path = _create_worktrees(superds, "rm-dry", "feat/rm-dry")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-dry", dry_run=True,
+        ))
+
+        would = [r.message for r in reports
+                 if r.result == WorktreeResult.SKIPPED_DRY_RUN]
+        assert would.count("would delete") == 4
+        assert would.count("would delete branch 'feat/rm-dry'") == 4
+        assert wt_path.exists()
+        assert _git(superds["super"], "branch", "--list", "feat/rm-dry").stdout.strip()
+
+    def test_predicts_the_dirty_refusal(self, superds: dict):
+        """Same refusals as the real run: the dirty dataset and its parent."""
+        wt_path = _create_worktrees(superds, "rm-dry-dirty", "feat/rm-dry-dirty")
+        (wt_path / "sub-02" / "untracked.txt").write_text("precious\n")
+
+        def refused(dry_run: bool) -> list[str]:
+            return sorted(r.dataset_path for r in delete_nested_worktrees(
+                superds_path=superds["super"], target="feat/rm-dry-dirty",
+                dry_run=dry_run,
+            ) if r.result == WorktreeResult.FAILED)
+
+        predicted = refused(dry_run=True)
+        assert predicted == [".", "sub-02"]
+        assert refused(dry_run=False) == predicted
+
+    def test_predicts_the_unmerged_branch_refusal(self, superds: dict):
+        wt_path = _create_worktrees(superds, "rm-dry-br", "feat/rm-dry-br")
+        (wt_path / "new-file.txt").write_text("branch-only\n")
+        _git(wt_path, "add", "new-file.txt")
+        _git(wt_path, "commit", "-m", "branch-only commit")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-dry-br", dry_run=True,
+        ))
+
+        failed = [r for r in reports if r.result == WorktreeResult.FAILED]
+        assert [r.dataset_path for r in failed] == ["."]
+        assert "not fully merged" in failed[0].message

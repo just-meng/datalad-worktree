@@ -72,8 +72,8 @@ def _render_report(report: WorktreeReport) -> None:
         print(f"{C.GREEN}create{C.NC} {label} -> {dest} "
               f"{C.DIM}(leftover branch reset){C.NC}")
     elif report.result == WorktreeResult.SKIPPED_DRY_RUN:
-        note = f" {C.DIM}({report.message}){C.NC}" if report.message else ""
-        print(f"{C.GREEN}create{C.NC} {C.DIM}[DRY-RUN]{C.NC} {label} -> {dest}{note}")
+        # Shared by add, fetch and delete: the message carries the verb.
+        print(f"{C.CYAN}dry-run{C.NC} {label} -> {dest} {C.DIM}({report.message}){C.NC}")
     elif report.result in (
         WorktreeResult.SKIPPED_NOT_INSTALLED,
         WorktreeResult.SKIPPED_NOT_GIT_REPO,
@@ -208,6 +208,10 @@ def build_parser():
         help="worktree path or branch name to delete",
     )
     del_p.add_argument(
+        "-n", "--dry-run", action="store_true", default=False,
+        help="show what would be deleted, and what would be refused",
+    )
+    del_p.add_argument(
         "--keep-branch", action="store_true", default=False,
         help="keep the branch (default: delete it; refuses if unmerged "
              "unless -f)",
@@ -273,6 +277,7 @@ def _cmd_add(args) -> int:
     if args.dry_run:
         would_create = sum(
             1 for r in reports if r.result == WorktreeResult.SKIPPED_DRY_RUN
+            and r.message.startswith("would create")
         )
         parts = [f"{would_create} would be created"]
         if skipped:
@@ -386,6 +391,7 @@ def _cmd_delete(args) -> int:
             target=args.target,
             delete_branch=not args.keep_branch,
             force=args.force,
+            dry_run=args.dry_run,
         ):
             reports.append(report)
             _render_report(report)
@@ -394,8 +400,11 @@ def _cmd_delete(args) -> int:
         return 1
 
     deleted = sum(r.result == WorktreeResult.DELETED for r in reports)
+    if args.dry_run:
+        deleted = sum(r.result == WorktreeResult.SKIPPED_DRY_RUN
+                      and r.message == "would delete" for r in reports)
     skipped = sum(r.result == WorktreeResult.SKIPPED_NO_WORKTREE for r in reports)
-    parts = [f"{deleted} deleted"]
+    parts = [f"{deleted} {'would be deleted' if args.dry_run else 'deleted'}"]
     if skipped:
         parts.append(f"{skipped} skipped")
     print(f"\n{', '.join(parts)}")

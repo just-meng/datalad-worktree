@@ -459,6 +459,12 @@ try:
                 doc="Path to the superdataset (default: current directory)",
                 constraints=EnsureStr() | EnsureNone(),
             ),
+            dry_run=Parameter(
+                args=("-n", "--dry-run"),
+                doc="Show what would be deleted, and what would be refused",
+                action="store_true",
+                default=False,
+            ),
             keep_branch=Parameter(
                 args=("--keep-branch",),
                 doc="Keep the branch. By default it is deleted too (safe "
@@ -482,6 +488,7 @@ try:
             dataset=None,
             keep_branch=False,
             force=False,
+            dry_run=False,
         ):
             from datalad.distribution.dataset import require_dataset
 
@@ -499,8 +506,10 @@ try:
                 target=target,
                 delete_branch=not keep_branch,
                 force=force,
+                dry_run=dry_run,
             ):
-                if report.result == WorktreeResult.DELETED:
+                if report.result in (WorktreeResult.DELETED,
+                                     WorktreeResult.SKIPPED_DRY_RUN):
                     status = "ok"
                 elif report.result == WorktreeResult.DELETED_BRANCH:
                     status = "ok"
@@ -518,6 +527,7 @@ try:
                     dataset_path=report.dataset_path,
                     branch=report.branch,
                     branch_deleted=report.result == WorktreeResult.DELETED_BRANCH,
+                    dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
                     type="dataset",
                 )
 

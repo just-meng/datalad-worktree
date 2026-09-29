@@ -101,6 +101,7 @@ worktree delete <target> [options]
 
   <target>                  worktree path or branch name to delete
 
+  -n, --dry-run             show what would be deleted, and what would be refused
   --keep-branch             keep the branch (by default it is deleted too;
                             safe delete, refuses if unmerged)
   -f, --force               force deletion even with uncommitted changes;

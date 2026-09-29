@@ -93,10 +93,13 @@ class TestRenderReport:
         assert "(new branch)" in out
 
     def test_skipped_dry_run(self, capsys):
-        _render_report(self._make_report(WorktreeResult.SKIPPED_DRY_RUN))
+        """Shared by add, fetch and delete, so the message carries the verb."""
+        _render_report(self._make_report(WorktreeResult.SKIPPED_DRY_RUN,
+                                         message="would delete"))
         out = capsys.readouterr().out
-        assert "create" in out
-        assert "[DRY-RUN]" in out
+        assert "dry-run" in out
+        assert "would delete" in out
+        assert "create" not in out
 
     def test_skipped_not_installed(self, capsys):
         _render_report(self._make_report(

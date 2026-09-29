@@ -559,8 +559,9 @@ def create_nested_worktrees(
     def reset_note(dataset_path: str) -> str:
         """Dry-run message, so `-n` says when a branch would be moved."""
         if dataset_path not in to_reset:
-            return ""
-        return f"would reset leftover branch '{branch}' to this checkout's HEAD"
+            return "would create"
+        return (f"would create, resetting leftover branch '{branch}' "
+                f"to this checkout's HEAD")
 
     # ── Create super dataset worktree ────────────────────────────────────
     if dry_run:
