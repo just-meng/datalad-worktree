@@ -28,6 +28,9 @@ Three properties keep it safe:
   on the next ``git status``, and under ``annex.thin`` it reaches the shared
   object store that the point above is careful to protect.
 
+Snakemake's ``.snakemake_timestamp`` marker is carried along with the
+directory it sits in, although it is untracked; see ``_copy_marker``.
+
 Reconstructing mtimes from commit dates (the ``git-restore-mtime`` approach)
 is deliberately not used: these repositories are routinely rewritten by
 ``jj squash``/rebase housekeeping, which would make every file look new.
@@ -69,6 +72,9 @@ _POINTER_MAX_BYTES = 1024
 
 # `status --porcelain` index codes that carry a second, NUL-separated path.
 _TWO_PATH_CODES = frozenset({"R", "C"})
+
+# Where Snakemake keeps a directory() output's mtime; see `_copy_marker`.
+SNAKEMAKE_TIMESTAMP = ".snakemake_timestamp"
 
 
 def _git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
@@ -304,6 +310,31 @@ def _copy_one(source: Path, target: Path) -> bool:
     return True
 
 
+def _copy_marker(reference_dir: Path, target_dir: Path) -> bool:
+    """
+    Carry Snakemake's ``.snakemake_timestamp`` from one directory to another.
+
+    For a ``directory()`` output Snakemake reads this file's mtime instead of
+    the directory's own whenever the file exists, and ``snakemake --touch``
+    stamps only the file. It is conventionally gitignored, so a worktree never
+    has it: Snakemake there falls back to the directory mtime, which ``--touch``
+    never moved, and reruns a job the reference considers up to date.
+
+    Creating the file moves ``target_dir``'s own mtime, so this must run before
+    that directory is stamped.
+    """
+    source = reference_dir / SNAKEMAKE_TIMESTAMP
+    if not source.is_file():
+        return False
+    target = target_dir / SNAKEMAKE_TIMESTAMP
+    try:
+        target.touch()
+    except OSError as error:
+        logger.debug("Could not create %s: %s", target, error)
+        return False
+    return _copy_one(source, target)
+
+
 def copy_mtimes(reference: Path, worktree: Path) -> tuple[int, int, str]:
     """
     Copy mtimes from a working tree to a worktree made from it.
@@ -321,10 +352,10 @@ def copy_mtimes(reference: Path, worktree: Path) -> tuple[int, int, str]:
     files = sum(_copy_one(reference / path, worktree / path) for path in paths)
     # Files first: directories inherit whatever the reference says, and
     # stamping a child never disturbs the parent we already set.
-    dirs = sum(
-        _copy_one(reference / path, worktree / path)
-        for path in parent_dirs(paths)
-    )
+    dirs = 0
+    for path in parent_dirs(paths):
+        _copy_marker(reference / path, worktree / path)
+        dirs += _copy_one(reference / path, worktree / path)
     return files, dirs, ""
 
 
