@@ -1,6 +1,6 @@
 # CLI reference
 
-Three equivalent entry points:
+Three entry points:
 
 ```bash
 worktree add runs /tmp/worktrees/runs           # standalone CLI
@@ -8,7 +8,7 @@ datalad worktree-add runs /tmp/worktrees/runs   # DataLad extension
 python -m datalad_worktree add runs /tmp/worktrees/runs
 ```
 
-All commands run from the superdataset root, or take `-d <path>` to name it. Output is colored when stdout is a TTY; `--no-color` disables it.
+All commands run from the superdataset root, or take `-d <path>` to name it. The `datalad worktree-*` commands take the same arguments, with three differences: `worktree-delete` has no `-y` and never asks for confirmation, there is no `--no-color`, and there is no bare-command default. In the standalone CLI, output is colored when stdout is a TTY; `--no-color` disables it.
 
 This is a behaviour reference: what each command and flag does. For *why* — the annex/container problem, the mtime problem, merge vs rebase, the delete guards — see [design.md](design.md).
 
@@ -54,7 +54,7 @@ worktree add rerun /tmp/wt --follow-parent 4f2a91c   # mirror the project as tha
 
 With a commit — a `datalad run` record, say — the commit also defines the *set* of datasets: one added since is absent, one recorded then is included even if the checkout has moved on, and one the checkout does not have is reported as not installed. `branch` is still created in every dataset, at the resolved commit, so the snapshot is something you can work and commit in. It refuses, creating nothing, if the commit cannot be resolved or if a recorded commit is not an object the subdataset actually has (never fetched there).
 
-All-or-nothing: a pre-flight runs first, and if any dataset would fail (branch already checked out elsewhere, destination path occupied) nothing is created. A subdataset that fails during creation does not abort the rest; a superdataset failure does.
+All-or-nothing: a pre-flight runs first, and if any dataset would fail (branch already checked out elsewhere, superdataset destination occupied) nothing is created. A subdataset that fails during creation does not abort the rest; a superdataset failure does.
 
 Two steps run at the end, over all the worktrees at once: container bind-mount configuration and mtime copying. Skip them with `--no-bindpaths` / `--no-mtimes`. Only the **superdataset's** containers are configured, so a container registered in a subdataset needs its bind paths set up by hand.
 
@@ -84,7 +84,7 @@ worktree fetch [target] [options]
   -d, --dataset <path>      checkout to fetch into (default: current directory)
 ```
 
-Brings `target`'s commits into the checkout you are standing in, then refreshes mtimes *from* `target`. `target` is a worktree path or a branch name, resolved the same way `worktree delete` resolves its target.
+Brings `target`'s commits into the checkout you are standing in, then refreshes mtimes *from* `target`. `target` is a worktree path or a branch name. With no `target`, the source is the working tree this worktree was created from, so from a main checkout you must name one.
 
 Data always lands in the tree you are standing in, so direction follows from where you run it:
 
@@ -96,7 +96,7 @@ cd /tmp/worktrees/runs
 worktree fetch             # the other way: bring new code and inputs in
 ```
 
-Unrelated uncommitted work does not block it: only paths the fetch would actually overwrite are refused, and they are named. A dataset the worktree merely consumed (your `code/` subdataset, say) is strictly behind, which is "nothing to ship" rather than a conflict, and is skipped.
+Unrelated uncommitted work does not block it: only paths the fetch would actually overwrite are refused, and they are named. A dataset the worktree merely consumed (your `code/` subdataset, say) is strictly behind and is skipped. A dataset whose worktree is on a detached HEAD refuses the whole fetch: there is no branch to bring in, so check one out there first.
 
 ## `worktree delete`
 
@@ -113,7 +113,7 @@ worktree delete <target> [options]
   -d, --dataset <path>      superdataset root (default: current directory)
 ```
 
-Deletes deepest-first, so children go before parents. Previews the directories — and the branch, which is deleted too unless `--keep-branch` — and asks for confirmation unless `-y`. The branch delete is the safe one: a branch holding commits its checkout lacks (results never fetched) is refused and kept, unless `-f`. The main working tree is never a target, by path or by branch — it is reported as "not a worktree" and nothing changes.
+Deletes deepest-first, so children go before parents. Previews the directories — and the branch, which is deleted too unless `--keep-branch` — and asks for confirmation unless `-y`. The branch delete is the safe one: a branch holding commits its checkout lacks (results never fetched) is refused and kept, unless `-f`. The main working tree is never a target. Named by path, it is reported as "the main working tree, not a worktree". Named by branch, it is passed over, so a branch checked out only there reports "no worktree on branch". Either way nothing changes.
 
 ```bash
 worktree delete my-feature
@@ -127,11 +127,15 @@ worktree delete --force my-feature
 
 ```
 worktree list [options]
+
+  -d, --dataset <path>      superdataset root (default: current directory)
 ```
 
-Also the default when no subcommand is given (`worktree` alone). Shows only datasets with worktrees beyond the main one, grouped by the hierarchy each belongs to:
+Also the default when no subcommand is given (`worktree` alone). Shows only datasets with worktrees beyond the main one, grouped by the hierarchy each belongs to, with the main checkout's group first:
 
 ```
+master
+  .           /mnt/Data/et_psychedelics/processed/2p
 runs
   .           /mnt/Data/worktrees/2p-runs
   code        /mnt/Data/worktrees/2p-runs/code (detached)
