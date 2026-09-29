@@ -8,7 +8,7 @@ datalad worktree-add runs /tmp/worktrees/runs   # DataLad extension
 python -m datalad_worktree add runs /tmp/worktrees/runs
 ```
 
-All commands run from the superdataset root, or take `-d <path>` to name it. The `datalad worktree-*` commands take the same arguments, with three differences: `worktree-delete` has no `-y` and never asks for confirmation, there is no `--no-color`, and there is no bare-command default. In the standalone CLI, output is colored when stdout is a TTY; `--no-color` disables it.
+All commands run from the superdataset root, or take `-d <path>` to name it. The `datalad worktree-*` commands take the same arguments, with two differences: there is no `--no-color`, and there is no bare-command default. In the standalone CLI, output is colored when stdout is a TTY; `--no-color` disables it.
 
 This is a behaviour reference: what each command and flag does. For *why* — the annex/container problem, the mtime problem, merge vs rebase, the delete guards — see [design.md](design.md).
 
@@ -109,16 +109,14 @@ worktree delete <target> [options]
                             safe delete, refuses if unmerged)
   -f, --force               force deletion even with uncommitted changes;
                             force-delete the branch
-  -y, --yes                 skip the confirmation prompt
   -d, --dataset <path>      superdataset root (default: current directory)
 ```
 
-Deletes deepest-first, so children go before parents. Previews the directories — and the branch, which is deleted too unless `--keep-branch` — and asks for confirmation unless `-y`. The branch delete is the safe one: a branch holding commits its checkout lacks (results never fetched) is refused and kept, unless `-f`. The main working tree is never a target. Named by path, it is reported as "the main working tree, not a worktree". Named by branch, it is passed over, so a branch checked out only there reports "no worktree on branch". Either way nothing changes.
+Deletes deepest-first, so children go before parents. Does not ask for confirmation. The branch is deleted too unless `--keep-branch`, and the output says so. The branch delete is the safe one: a branch holding commits its checkout lacks (results never fetched) is refused and kept, unless `-f`. The main working tree is never a target. Named by path, it is reported as "the main working tree, not a worktree". Named by branch, it is passed over, so a branch checked out only there reports "no worktree on branch". Either way nothing changes.
 
 ```bash
 worktree delete my-feature
 worktree delete /tmp/wt
-worktree delete --yes my-feature
 worktree delete --keep-branch my-feature
 worktree delete --force my-feature
 ```

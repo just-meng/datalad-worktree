@@ -94,7 +94,8 @@ def _render_report(report: WorktreeReport) -> None:
     elif report.result == WorktreeResult.DELETED:
         print(f"{C.GREEN}delete{C.NC} {label} -> {dest}")
     elif report.result == WorktreeResult.DELETED_BRANCH:
-        print(f"{C.GREEN}delete{C.NC} {label} branch '{report.branch}'")
+        print(f"{C.GREEN}delete{C.NC} {label} branch '{report.branch}' "
+              f"{C.DIM}(--keep-branch keeps it){C.NC}")
     elif report.result == WorktreeResult.FAILED:
         if is_tty:
             print("\033[2K", end="")
@@ -225,10 +226,6 @@ def build_parser():
     del_p.add_argument(
         "-f", "--force", action="store_true", default=False,
         help="force deletion even with uncommitted changes; force-delete branch",
-    )
-    del_p.add_argument(
-        "-y", "--yes", action="store_true", default=False,
-        help="skip confirmation prompt",
     )
     del_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
@@ -390,54 +387,12 @@ def _cmd_list(args) -> int:
 
 
 def _cmd_delete(args) -> int:
-    from datalad_worktree.delete import (
-        delete_nested_worktrees,
-        resolve_delete_targets,
-    )
+    from datalad_worktree.delete import delete_nested_worktrees
 
     superds_path = (args.dataset or Path.cwd()).resolve()
 
-    # ── Resolve targets ─────────────────────────────────────────────────
-    try:
-        targets, skipped = resolve_delete_targets(superds_path, args.target)
-    except ValueError as e:
-        print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
-        return 1
-
-    if not targets:
-        for report in skipped:
-            _render_report(report)
-        print(f"\n0 deleted, {len(skipped)} skipped")
-        return 0
-
-    # ── Show preview and confirm ────────────────────────────────────────
-    col_width = max(len(t.dataset_path) for t in targets) + 2
-
-    print(f"Will delete {len(targets)} worktree(s):")
-    for t in targets:
-        print(f"  {t.dataset_path:<{col_width}}{t.worktree_path}")
-    branches = sorted({t.branch for t in targets if t.branch})
-    if branches and not args.keep_branch:
-        print(
-            f"{C.YELLOW}Will also delete branch:{C.NC} {', '.join(branches)}"
-            f"  {C.DIM}(--keep-branch to keep it){C.NC}"
-        )
-
-    if not args.yes:
-        try:
-            answer = input("\nProceed? [y/N] ")
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return 1
-        if answer.strip().lower() != "y":
-            print("Aborted.")
-            return 1
-
-    # ── Delete ──────────────────────────────────────────────────────────
     try:
         reports: list[WorktreeReport] = []
-        deleted = 0
-        skipped_count = len(skipped)
         for report in delete_nested_worktrees(
             superds_path=superds_path,
             target=args.target,
@@ -446,22 +401,18 @@ def _cmd_delete(args) -> int:
         ):
             reports.append(report)
             _render_report(report)
-            if report.result == WorktreeResult.DELETED:
-                deleted += 1
-            elif report.result == WorktreeResult.SKIPPED_NO_WORKTREE:
-                skipped_count += 1
     except ValueError as e:
         print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
         return 1
 
-    has_failures = any(r.result == WorktreeResult.FAILED for r in reports)
-
+    deleted = sum(r.result == WorktreeResult.DELETED for r in reports)
+    skipped = sum(r.result == WorktreeResult.SKIPPED_NO_WORKTREE for r in reports)
     parts = [f"{deleted} deleted"]
-    if skipped_count:
-        parts.append(f"{skipped_count} skipped")
+    if skipped:
+        parts.append(f"{skipped} skipped")
     print(f"\n{', '.join(parts)}")
 
-    return 1 if has_failures else 0
+    return 1 if any(r.result == WorktreeResult.FAILED for r in reports) else 0
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────

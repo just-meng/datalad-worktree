@@ -216,7 +216,7 @@ class TestMainCLI:
         ])
         # Then delete them
         exit_code = main([
-            "--no-color", "delete", "--yes",
+            "--no-color", "delete",
             "-d", str(superds["super"]),
             "feat/rm-test",
         ])
@@ -231,7 +231,7 @@ class TestMainCLI:
             "feat/rm-path", str(wt_path),
         ])
         exit_code = main([
-            "--no-color", "delete", "--yes",
+            "--no-color", "delete",
             "-d", str(superds["super"]),
             str(wt_path),
         ])
@@ -252,7 +252,7 @@ class TestCLISummaryOutput:
         assert "4 created" in add_out
 
         main([
-            "--no-color", "delete", "--yes",
+            "--no-color", "delete",
             "-d", str(superds["super"]),
             "feat/sum",
         ])
@@ -289,7 +289,7 @@ class TestCLISummaryOutput:
 
     def test_delete_summary_with_skipped(self, superds: dict, capsys):
         main([
-            "--no-color", "delete", "--yes",
+            "--no-color", "delete",
             "-d", str(superds["super"]),
             "nonexistent/branch/xyz",
         ])
@@ -298,104 +298,58 @@ class TestCLISummaryOutput:
         assert "skipped" in out
 
 
-class TestDeleteConfirmation:
-    """Test the deletion confirmation prompt."""
+class TestDeleteOutput:
+    """delete acts without asking, and says so when it deletes the branch."""
 
-    def test_preview_shown(self, superds: dict, capsys, monkeypatch):
-        """Preview lists directories before prompting."""
+    def test_deletes_without_asking(self, superds: dict, monkeypatch):
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            "feat/confirm", str(superds["wt_location"] / "confirm-test"),
+            "feat/no-prompt", str(superds["wt_location"] / "no-prompt"),
         ])
-        capsys.readouterr()
 
-        # Simulate user typing "n"
-        monkeypatch.setattr("builtins.input", lambda _: "n")
+        def no_input(_):
+            raise AssertionError("delete must not prompt")
+
+        monkeypatch.setattr("builtins.input", no_input)
         exit_code = main([
             "--no-color", "delete",
             "-d", str(superds["super"]),
-            "feat/confirm",
-        ])
-        out = capsys.readouterr().out
-        assert "Will delete" in out
-        assert "Proceed?" not in out  # input() swallows the prompt
-        assert "Aborted" in out
-        assert exit_code == 1
-        # Worktrees should still exist
-        assert (superds["wt_location"] / "confirm-test").exists()
-
-    def test_confirm_yes_proceeds(self, superds: dict, capsys, monkeypatch):
-        main([
-            "--no-color", "add",
-            "-d", str(superds["super"]),
-            "feat/confirm-y", str(superds["wt_location"] / "confirm-y"),
-        ])
-        capsys.readouterr()
-
-        monkeypatch.setattr("builtins.input", lambda _: "y")
-        exit_code = main([
-            "--no-color", "delete",
-            "-d", str(superds["super"]),
-            "feat/confirm-y",
+            "feat/no-prompt",
         ])
         assert exit_code == 0
-        assert not (superds["wt_location"] / "confirm-y").exists()
+        assert not (superds["wt_location"] / "no-prompt").exists()
 
-    def test_eof_aborts(self, superds: dict, monkeypatch):
-        """EOF (piped input) aborts deletion."""
+    def test_branch_deletion_is_announced(self, superds: dict, capsys):
+        """The branch goes by default, so the output says how to keep it."""
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            "feat/confirm-eof", str(superds["wt_location"] / "confirm-eof"),
-        ])
-
-        def raise_eof(_):
-            raise EOFError
-
-        monkeypatch.setattr("builtins.input", raise_eof)
-        exit_code = main([
-            "--no-color", "delete",
-            "-d", str(superds["super"]),
-            "feat/confirm-eof",
-        ])
-        assert exit_code == 1
-        assert (superds["wt_location"] / "confirm-eof").exists()
-
-    def test_delete_branch_shown_in_preview(self, superds: dict, capsys, monkeypatch):
-        """The preview warns that the branch goes too, and how to keep it."""
-        main([
-            "--no-color", "add",
-            "-d", str(superds["super"]),
-            "feat/confirm-br", str(superds["wt_location"] / "confirm-br"),
+            "feat/announce", str(superds["wt_location"] / "announce"),
         ])
         capsys.readouterr()
 
-        monkeypatch.setattr("builtins.input", lambda _: "n")
         main([
             "--no-color", "delete",
             "-d", str(superds["super"]),
-            "feat/confirm-br",
+            "feat/announce",
         ])
         out = capsys.readouterr().out
-        assert "delete branch" in out.lower()
-        assert "feat/confirm-br" in out
+        assert "branch 'feat/announce'" in out
         assert "--keep-branch" in out
 
-    def test_keep_branch_not_shown_in_preview(self, superds: dict, capsys, monkeypatch):
-        """--keep-branch drops the branch warning from the preview."""
+    def test_keep_branch_announces_no_branch_deletion(self, superds: dict, capsys):
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
-            "feat/confirm-keep", str(superds["wt_location"] / "confirm-keep"),
+            "feat/announce-keep", str(superds["wt_location"] / "announce-keep"),
         ])
         capsys.readouterr()
 
-        monkeypatch.setattr("builtins.input", lambda _: "n")
         main([
             "--no-color", "delete", "--keep-branch",
             "-d", str(superds["super"]),
-            "feat/confirm-keep",
+            "feat/announce-keep",
         ])
         out = capsys.readouterr().out
-        assert "delete branch" not in out.lower()
+        assert "branch 'feat/announce-keep'" not in out
