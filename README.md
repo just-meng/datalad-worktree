@@ -23,10 +23,11 @@ snakemake code/Snakefile -c 1 -k        # the long run — keep developing in ma
 
 cd /data/my-project
 worktree fetch runs                     # results home, mtimes included
-worktree delete runs                    # dispose of it — or `worktree add -f` next time
+worktree delete runs                    # dispose of it — or overwrite with `worktree add`
+                                        # in the same location next time
 ```
 
-`add` walks `.gitmodules` recursively and creates a worktree for each subdataset that is *installed*, i.e. only when its directory exists and holds a `.git`, and an uninstalled one is skipped without being descended into. 
+`add` creates a worktree for the superdataset and every *installed* subdataset, nested the same way; uninstalled ones are skipped:
 
 ```
 /tmp/worktrees/runs/        <- superdataset worktree (branch: runs)
@@ -35,14 +36,17 @@ worktree delete runs                    # dispose of it — or `worktree add -f`
 └── results/
 ```
 
-Each is checked out on `runs`, created from that dataset's current state where the branch does not exist yet. A branch left over in only *some* datasets — what `worktree delete --keep-branch` leaves behind — is reset rather than resurrected, so a new worktree is always a fresh start. A branch that exists in *every* dataset is different: that is a state the hierarchy once recorded, so it is checked out as it stands.
+Each is on branch `runs`, starting from that dataset's current state. What happens when `runs` already exists is in [docs/cli.md](docs/cli.md#worktree-add).
+
+`fetch` brings the worktree's commits back into each dataset's main checkout, deepest first, then copies their mtimes across. `delete` removes the worktree from every dataset, deepest first, along with its branch.
 
 ## Highlights
 
-- **mtimes are preserved on both legs** — creating a worktree and fetching from one — so staleness detection keeps working and finished work is not recomputed. A file inherits a timestamp only when its content is identical on both sides, matched by git's content hash rather than by filename.
+- **mtimes are preserved in both directions** — creating a worktree and fetching from one — so staleness detection keeps working and finished work is not recomputed. A file inherits a timestamp only when its content is identical on both sides, matched by git's content hash rather than by filename. Snakemake's untracked `.snakemake_timestamp` markers travel too, so an output marked up to date with `snakemake --touch` stays up to date.
 - **`datalad containers-run` works inside the worktree**, via bind-mount configuration written per worktree, so the machine-specific paths stay out of the main checkout and out of history. One empty placeholder is committed on the worktree branch, which is what keeps a run record made there rerunnable elsewhere.
+- **Reproduce any recorded state.** `worktree add <branch> <path> --follow-parent <commit-or-tag>` checks every dataset out exactly as that superdataset commit recorded it, including which subdatasets existed then — to rerun a `datalad run` record from a clean slate, say. Without a commit, subdatasets follow what the superdataset records now, so a fresh worktree never starts with a modified subdataset.
 - **Results ship home without a clean tree.** Where your side has no commits of its own, `fetch` fast-forwards: nothing is rewritten, so unrelated work in progress is left alone. Where both sides have moved, it merges. It also runs the other way: from inside a worktree, `worktree fetch` brings new code and inputs in.
-- **Safe by default.** Creation is all-or-nothing: if any dataset would fail, none are created. Deletion never touches the main working tree, never removes a directory git does not call a worktree, and refuses worktrees still holding unmerged work unless forced.
+- **Safe by default.** Creation is all-or-nothing: if any dataset would fail, none are created. Deletion never touches the main working tree or a directory git does not call a worktree; it refuses a worktree with uncommitted changes and keeps a branch with unmerged commits, unless forced. Every command that changes something takes `--dry-run`.
 - **No dependencies.** Python standard library plus `git`. DataLad itself is optional — it only adds the `datalad worktree-*` commands.
 
 ## Installation
