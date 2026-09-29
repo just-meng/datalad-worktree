@@ -120,6 +120,23 @@ class TestCreateNestedWorktrees:
         assert all(r.result == WorktreeResult.SKIPPED_DRY_RUN for r in reports)
         assert not (superds["wt_location"] / "test-wt").exists()
 
+    def test_dry_run_reports_what_the_real_run_refuses(self, superds: dict):
+        """-n runs the pre-flight: it must not promise a worktree that `add` refuses."""
+        _git(superds["sub02"], "worktree", "add", "-q", "-b", "taken",
+             str(superds["wt_location"] / "elsewhere"))
+
+        reports = _run_create(
+            superds_path=superds["super"],
+            worktree_path=superds["wt_location"] / "test-wt",
+            branch="taken",
+            dry_run=True,
+        )
+
+        failed = _failed(reports)
+        assert [r.dataset_path for r in failed] == ["sub-02"]
+        assert "already checked out" in failed[0].message
+        assert not [r for r in reports if r.result == WorktreeResult.SKIPPED_DRY_RUN]
+
     def test_creates_all_worktrees(self, superds: dict):
         reports = _run_create(
             superds_path=superds["super"],

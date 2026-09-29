@@ -536,24 +536,25 @@ def create_nested_worktrees(
             return
 
     # ── Pre-flight check ─────────────────────────────────────────────────
-    if not dry_run:
-        errors = _preflight_check(
-            superds_path, worktree_root, branch, subdatasets,
-            replaced_root,
-        )
-        if errors:
-            for dataset_path, msg in errors:
-                source = superds_path if dataset_path == "." else superds_path / dataset_path
-                dest = worktree_root if dataset_path == "." else worktree_root / dataset_path
-                yield WorktreeReport(
-                    dataset_path=dataset_path,
-                    source=source,
-                    destination=dest,
-                    result=WorktreeResult.FAILED,
-                    branch=branch,
-                    message=msg,
-                )
-            return
+    # Also under --dry-run, which would otherwise promise what the real run
+    # refuses.
+    errors = _preflight_check(
+        superds_path, worktree_root, branch, subdatasets,
+        replaced_root,
+    )
+    if errors:
+        for dataset_path, msg in errors:
+            source = superds_path if dataset_path == "." else superds_path / dataset_path
+            dest = worktree_root if dataset_path == "." else worktree_root / dataset_path
+            yield WorktreeReport(
+                dataset_path=dataset_path,
+                source=source,
+                destination=dest,
+                result=WorktreeResult.FAILED,
+                branch=branch,
+                message=msg,
+            )
+        return
 
     def reset_note(dataset_path: str) -> str:
         """Dry-run message, so `-n` says when a branch would be moved."""
