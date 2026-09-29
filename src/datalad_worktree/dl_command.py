@@ -152,12 +152,6 @@ try:
                 default=None,
                 metavar="COMMIT",
             ),
-            no_create_branch=Parameter(
-                args=("--no-create-branch",),
-                doc="Fail if the branch doesn't exist instead of creating it",
-                action="store_true",
-                default=False,
-            ),
             force=Parameter(
                 args=("-f", "--force"),
                 doc="""Replace an existing worktree even if it holds commits
@@ -195,7 +189,6 @@ try:
             branch,
             worktree_path,
             dataset=None,
-            no_create_branch=False,
             force=False,
             follow_parent=None,
             dry_run=False,
@@ -220,7 +213,6 @@ try:
                 superds_path=superds_path,
                 worktree_path=Path(worktree_path),
                 branch=branch,
-                create_branch=not no_create_branch,
                 discard_unmerged=force,
                 follow_parent=follow_parent is not None,
                 at_commit=(None if follow_parent in (None, "HEAD")

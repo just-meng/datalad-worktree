@@ -21,19 +21,16 @@ class TestBuildParser:
         args = parser.parse_args(["add", "b", "/tmp/wt"])
         assert args.dry_run is False
         assert args.force is False
-        assert args.no_create_branch is False
 
     def test_add_all_flags(self):
         parser = build_parser()
         args = parser.parse_args([
             "add", "-n", "-f",
-            "--no-create-branch",
             "-d", "/data/ds",
             "b", "/tmp/wt",
         ])
         assert args.dry_run is True
         assert args.force is True
-        assert args.no_create_branch is True
         assert str(args.dataset) == "/data/ds"
 
     def test_list_command(self):

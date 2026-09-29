@@ -37,7 +37,6 @@ def _git_worktree_add(
     repo_path: Path,
     dest_path: Path,
     branch: str,
-    create_branch: bool = True,
     force: bool = False,
     reset_branch: bool = False,
     start_point: str | None = None,
@@ -64,14 +63,9 @@ def _git_worktree_add(
     elif git_branch_exists(repo_path, branch):
         cmd.extend([str(dest_path), branch])
         result_type = WorktreeResult.CREATED
-    elif create_branch:
+    else:
         cmd.extend(["-b", branch, str(dest_path)])
         result_type = WorktreeResult.CREATED_NEW_BRANCH
-    else:
-        return (
-            WorktreeResult.FAILED,
-            f"Branch '{branch}' does not exist and --no-create-branch was set",
-        )
 
     logger.debug("Running: %s", " ".join(cmd))
 
@@ -286,7 +280,6 @@ def _preflight_check(
     worktree_root: Path,
     branch: str,
     subdatasets: list[SubDataset],
-    create_branch: bool,
     replaced_root: Path | None = None,
 ) -> list[tuple[str, str]]:
     """
@@ -320,10 +313,6 @@ def _preflight_check(
             errors.append(
                 (".", f"branch '{branch}' is already checked out at {conflict}")
             )
-        elif not create_branch and not git_branch_exists(superds_path, branch):
-            errors.append(
-                (".", f"branch '{branch}' does not exist and --no-create-branch was set")
-            )
 
     # Check subdatasets
     for subds in subdatasets:
@@ -336,11 +325,6 @@ def _preflight_check(
                 subds.rel_path,
                 f"branch '{branch}' is already checked out at {conflict}",
             ))
-        elif not create_branch and not git_branch_exists(subds.abs_path, branch):
-            errors.append((
-                subds.rel_path,
-                f"branch '{branch}' does not exist and --no-create-branch was set",
-            ))
 
     return errors
 
@@ -349,7 +333,6 @@ def create_nested_worktrees(
     superds_path: Path,
     worktree_path: Path,
     branch: str,
-    create_branch: bool = True,
     replace: bool = True,
     discard_unmerged: bool = False,
     follow_parent: bool = False,
@@ -528,8 +511,7 @@ def create_nested_worktrees(
 
     # ── Leftover branches from an earlier run ────────────────────────────
     # Decided across the whole hierarchy, before anything is created, so that
-    # the pre-flight and the dry run can both report it. --no-create-branch
-    # asks for the branch as it stands, so it never resets.
+    # the pre-flight and the dry run can both report it.
     presence = branch_presence(superds_path, branch, subdatasets)
     if follow_parent:
         # Every existing branch will be moved to a recorded commit, so the
@@ -537,7 +519,7 @@ def create_nested_worktrees(
         # ones the some/all rule would have reset.
         to_reset = {d for d, _repo, has in presence if has}
     else:
-        to_reset = branches_to_reset(presence) if create_branch else set()
+        to_reset = branches_to_reset(presence)
 
     if to_reset and not discard_unmerged:
         blocked = unmerged_branches(presence, to_reset, branch)
@@ -557,7 +539,7 @@ def create_nested_worktrees(
     if not dry_run:
         errors = _preflight_check(
             superds_path, worktree_root, branch, subdatasets,
-            create_branch, replaced_root,
+            replaced_root,
         )
         if errors:
             for dataset_path, msg in errors:
@@ -604,7 +586,6 @@ def create_nested_worktrees(
             repo_path=superds_path,
             dest_path=worktree_root,
             branch=branch,
-            create_branch=create_branch,
             force=discard_unmerged,
             reset_branch="." in to_reset,
             start_point=start_points.get("."),
@@ -674,7 +655,6 @@ def create_nested_worktrees(
             repo_path=subds.abs_path,
             dest_path=dest_subds,
             branch=branch,
-            create_branch=create_branch,
             force=discard_unmerged,
             reset_branch=subds.rel_path in to_reset,
             start_point=start_points.get(subds.rel_path),

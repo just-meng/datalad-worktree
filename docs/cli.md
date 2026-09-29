@@ -27,7 +27,6 @@ worktree add <branch> <worktree-path> [options]
                             take each subdataset's state from the commit its
                             parent records, not from the branch name; with a
                             commit, mirror the whole state it recorded
-  --no-create-branch        only checkout existing branches, don't create new ones
   --no-bindpaths            don't configure container bind mounts
   --no-mtimes               don't copy file mtimes from the source working trees
   -d, --dataset <path>      superdataset root (default: current directory)
@@ -40,8 +39,6 @@ Where the branch does not exist it is created from that dataset's current HEAD. 
 - **In every dataset** — checked out as it stands, reported as `(existing branch)`.
 - **In only some datasets** — a leftover, e.g. from `worktree delete --keep-branch` or a branch delete refused as unmerged. Reset to that dataset's current HEAD, reported as `(leftover branch reset)`. Refused instead, changing nothing, if that branch holds commits its checkout lacks: `worktree fetch` it first, give the branch to every dataset, or `-f` to discard them.
 - **Nowhere** — created, reported as `(new branch)`.
-
-`--no-create-branch` asks for the branch as it stands, so it never resets and fails on datasets that lack it.
 
 ### `--follow-parent`: one recorded state instead of one branch name
 
@@ -61,7 +58,6 @@ Two steps run at the end, over all the worktrees at once: container bind-mount c
 ```bash
 worktree add experiment /tmp/wt
 worktree add -n experiment /tmp/wt                  # dry run
-worktree add --no-create-branch v1.0 /tmp/wt        # refuse unless the branch exists
 worktree add runs /tmp/worktrees/runs               # replaces an existing worktree
 worktree add -f runs /tmp/worktrees/runs            # ... even if it holds unfetched work
 ```

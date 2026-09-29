@@ -106,13 +106,6 @@ class TestGitWorktreeAdd:
         assert result == WorktreeResult.CREATED
         assert dest.exists()
 
-    def test_no_create_branch_fails(self, datalad_ds: Path, tmp_path: Path):
-        dest = tmp_path / "wt"
-        result, msg = _git_worktree_add(
-            datalad_ds, dest, "nonexistent", create_branch=False
-        )
-        assert result == WorktreeResult.FAILED
-        assert "--no-create-branch" in msg
 
 
 class TestCreateNestedWorktrees:
@@ -171,16 +164,6 @@ class TestCreateNestedWorktrees:
         failed = _failed(reports)
         assert failed[0].result == WorktreeResult.FAILED
         assert "already exists" in failed[0].message
-
-    def test_no_create_branch(self, superds: dict):
-        reports = _run_create(
-            superds_path=superds["super"],
-            worktree_path=superds["wt_location"] / "test-wt",
-            branch="nonexistent/branch",
-            create_branch=False,
-        )
-        assert not _all_ok(reports)
-        assert "--no-create-branch" in _failed(reports)[0].message
 
     def test_not_a_repo_raises(self, tmp_path: Path):
         with pytest.raises(ValueError, match="Not a git repository"):
@@ -527,19 +510,6 @@ class TestLeftoverBranches:
         assert [r.dataset_path for r in noted] == ["sub-02"]
         assert not worktree.exists()
 
-    def test_no_create_branch_never_resets(self, superds: dict):
-        """--no-create-branch asks for the branch as it stands."""
-        self._leftover_in_sub02(superds, ahead=False)
-        worktree = superds["wt_location"] / "wt"
-
-        reports = _run_create(
-            superds_path=superds["super"], worktree_path=worktree, branch="runs",
-            create_branch=False,
-        )
-
-        assert not [r for r in reports
-                    if r.result == WorktreeResult.CREATED_RESET_BRANCH]
-        assert any("no-create-branch" in (r.message or "") for r in _failed(reports))
 
 
 # ── --follow-parent: the state the parent records, not the branch name ───────

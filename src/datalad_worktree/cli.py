@@ -152,10 +152,6 @@ def build_parser():
              "superdataset there too and mirror that whole state",
     )
     add_p.add_argument(
-        "--no-create-branch", action="store_true", default=False,
-        help="don't create new branches; only checkout existing ones",
-    )
-    add_p.add_argument(
         "--no-bindpaths", action="store_true", default=False,
         help="don't configure container bind mounts for datalad containers-run",
     )
@@ -245,7 +241,6 @@ def _cmd_add(args) -> int:
             superds_path=superds_path,
             worktree_path=worktree_path,
             branch=args.branch,
-            create_branch=not args.no_create_branch,
             discard_unmerged=args.force,
             follow_parent=args.follow_parent is not None,
             at_commit=(None if args.follow_parent in (None, "HEAD")
