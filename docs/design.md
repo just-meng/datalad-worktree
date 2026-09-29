@@ -1,5 +1,21 @@
 # Design notes
 
+## The premise: worktrees are ephemeral
+
+A worktree exists for one run: create it, run the pipeline, fetch the results home, then throw it away. Nothing of value is meant to live only there. Every other decision follows from this.
+
+- **The main checkout is the only lasting place.**
+  - Results have to come home: commits through `fetch`, and their mtimes with them, or the main checkout reruns work the worktree already did.
+  - A new worktree has to start from the main checkout's state, mtimes included, or it reruns work the main checkout already has.
+- **Creating is re-creating.** `add` replaces an existing worktree by default and starts every branch at HEAD, so an old run never comes back by accident. Going back to one is explicit: `--follow-parent <branch>`.
+- **Deleting is routine.** There is no prompt, and the branch goes too.
+- **The only thing to protect is work that hasn't come home yet.** Every refusal guards exactly that:
+  - commits the main checkout lacks, when replacing a worktree, resetting a branch, or deleting a branch;
+  - uncommitted changes, when deleting a worktree.
+
+  `-f` means "I know, throw it away".
+- **A worktree that lives on goes stale by itself.** Snakemake keeps the *text* of each command in untracked `.snakemake` records. A later edit to a rule then triggers Snakemake's `code` rerun in the old worktree, but not in a fresh one.
+
 ## Containers
 
 - **Per-worktree config, not committed config.** `add` writes the bind-mount option and a `cmdexec` carrying `{{bindpaths}}` with `git config --worktree`. The paths are machine-specific, so they stay out of the main checkout and out of history.
@@ -32,11 +48,11 @@
 
 ## `add`
 
-- **An existing branch always starts at HEAD.** A new worktree is a fresh start, like the replacement below.
+- **An existing branch always starts at HEAD,** as the premise requires.
   - Checking an existing branch out where it sat resurrected an earlier run's code and outputs, in the datasets that still had it.
   - An older rule excepted a branch present in *every* dataset, as a state the hierarchy had recorded. That made the result depend on history the user could not see. Going back to a recorded state is now explicit: `--follow-parent <branch-or-commit>`.
   - Resetting moves a pointer, so a branch holding unfetched commits refuses.
-- **Replace by default** (#28). Worktrees are meant to be disposable: one that is merged or behind holds nothing but stale mtimes. A long-lived one also accumulates untracked `.snakemake` records holding the *text* of each command, so a later rule edit trips Snakemake's `code` rerun trigger. The branch goes too, so the new worktree starts from the main checkout, not from the old run.
+- **Replace by default** (#28). A worktree that is merged or behind holds nothing the main checkout lacks. The branch goes too, so the new worktree starts from the main checkout, not from the old run.
 - **All-or-nothing pre-flight.** A half-created hierarchy is harder to clean up than a refusal. `-n` runs the same checks: a dry run that promises what the real run refuses is worse than none.
 - **`--follow-parent`** (#29). A subdataset's branch tip and the commit its parent records are different things. Checking out the tip is how a fresh worktree was born with a modified gitlink. The recorded commits are checked for existence before anything is created; otherwise git fails partway, after the superdataset worktree already exists.
 - **Discovery reads `.gitmodules` with `configparser`,** with no DataLad call and no gitpython, so DataLad stays optional.
@@ -60,7 +76,7 @@
 - **The `rmtree` fallback never overrules git's refusal of a dirty worktree.** `git worktree remove` fails on every DataLad worktree, whose `.git` is not a gitlink file, so the fallback ran every time. It deleted uncommitted and untracked work without `-f`. It now runs only on a clean worktree. A subdataset directory the command itself just deleted does not count as a change.
 - **All-or-nothing on dirty worktrees, like `add`.** A dirty worktree is refused, and so is every dataset above it, since deleting a parent deletes the child. Deleting the clean rest would leave a half-deleted hierarchy. The unmerged-branch refusal stays per branch: the worktree goes, the branch and its commits stay.
 - **The branch goes by default.** A kept branch is one the next `add` has to reset. `git branch -d` still refuses an unmerged one.
-- **No confirmation prompt.** Refusing dirty worktrees and unmerged branches is the protection. A prompt only added friction, and it blocked non-interactive callers such as scripts and agents. `-n` previews.
+- **No confirmation prompt.** The refusals protect work that hasn't come home yet, so a prompt only added friction. It also blocked non-interactive callers such as scripts and agents. `-n` previews.
 
 ## `list`
 
