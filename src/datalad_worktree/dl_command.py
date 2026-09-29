@@ -405,8 +405,8 @@ try:
             # Delete by branch name
             datalad worktree-delete feature/x
 
-            # Also delete the branch
-            datalad worktree-delete --delete-branch feature/x
+            # Delete the worktrees but keep the branch
+            datalad worktree-delete --keep-branch feature/x
         """
 
         @staticmethod
@@ -467,9 +467,10 @@ try:
                 doc="Path to the superdataset (default: current directory)",
                 constraints=EnsureStr() | EnsureNone(),
             ),
-            delete_branch=Parameter(
-                args=("--delete-branch",),
-                doc="Also delete the branch (safe delete; refuses if unmerged)",
+            keep_branch=Parameter(
+                args=("--keep-branch",),
+                doc="Keep the branch. By default it is deleted too (safe "
+                    "delete; refuses if unmerged unless --force)",
                 action="store_true",
                 default=False,
             ),
@@ -487,7 +488,7 @@ try:
         def __call__(
             target,
             dataset=None,
-            delete_branch=False,
+            keep_branch=False,
             force=False,
         ):
             from datalad.distribution.dataset import require_dataset
@@ -504,7 +505,7 @@ try:
             for report in delete_nested_worktrees(
                 superds_path=Path(ds.path),
                 target=target,
-                delete_branch=delete_branch,
+                delete_branch=not keep_branch,
                 force=force,
             ):
                 if report.result == WorktreeResult.DELETED:

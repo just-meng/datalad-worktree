@@ -218,8 +218,9 @@ def build_parser():
         help="worktree path or branch name to delete",
     )
     del_p.add_argument(
-        "--delete-branch", action="store_true", default=False,
-        help="also delete the branch (safe delete; refuses if unmerged)",
+        "--keep-branch", action="store_true", default=False,
+        help="keep the branch (default: delete it; refuses if unmerged "
+             "unless -f)",
     )
     del_p.add_argument(
         "-f", "--force", action="store_true", default=False,
@@ -415,10 +416,12 @@ def _cmd_delete(args) -> int:
     print(f"Will delete {len(targets)} worktree(s):")
     for t in targets:
         print(f"  {t.dataset_path:<{col_width}}{t.worktree_path}")
-    if args.delete_branch:
-        branches = sorted({t.branch for t in targets if t.branch})
-        if branches:
-            print(f"Will also delete branch: {', '.join(branches)}")
+    branches = sorted({t.branch for t in targets if t.branch})
+    if branches and not args.keep_branch:
+        print(
+            f"{C.YELLOW}Will also delete branch:{C.NC} {', '.join(branches)}"
+            f"  {C.DIM}(--keep-branch to keep it){C.NC}"
+        )
 
     if not args.yes:
         try:
@@ -438,7 +441,7 @@ def _cmd_delete(args) -> int:
         for report in delete_nested_worktrees(
             superds_path=superds_path,
             target=args.target,
-            delete_branch=args.delete_branch,
+            delete_branch=not args.keep_branch,
             force=args.force,
         ):
             reports.append(report)

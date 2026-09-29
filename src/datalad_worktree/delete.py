@@ -276,7 +276,7 @@ def resolve_delete_targets(
 def delete_nested_worktrees(
     superds_path: Path,
     target: str,
-    delete_branch: bool = False,
+    delete_branch: bool = True,
     force: bool = False,
 ) -> Iterator[WorktreeReport]:
     """
@@ -296,7 +296,8 @@ def delete_nested_worktrees(
     target : str
         Either a worktree path or a branch name.
     delete_branch : bool
-        If True, also delete the branch (using safe ``git branch -d``).
+        If True (the default), also delete the branch (using safe
+        ``git branch -d``).
     force : bool
         Pass ``--force`` to ``git worktree remove`` and use ``-D`` for
         branch deletion.
@@ -333,7 +334,7 @@ def delete_nested_worktrees(
             branch=t.branch,
         )
 
-        # Delete branch if requested
+        # Delete branch unless asked to keep it
         if delete_branch and t.branch:
             err = _git_branch_delete(t.repo_path, t.branch, force=force)
             if err:

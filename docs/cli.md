@@ -37,7 +37,7 @@ Creates a worktree for the superdataset and every installed subdataset, on `bran
 
 Where the branch does not exist it is created from that dataset's current HEAD. Where it exists, what happens depends on whether it exists *everywhere*:
 
-- **In only some datasets** — a leftover, since `worktree delete` keeps branches by default. It is reset to that dataset's current HEAD, reported as `(leftover branch reset)`, so the worktree is a fresh start rather than a hybrid of the last run and the present. Refused instead, changing nothing, if that branch holds commits its checkout lacks — a finished run whose results were never fetched, or a branch you created in one dataset on purpose. Then either `worktree fetch` it first, give the branch to every dataset, or `-f` to reset it and discard those commits.
+- **In only some datasets** — a leftover, e.g. from `worktree delete --keep-branch` or a branch delete refused as unmerged. It is reset to that dataset's current HEAD, reported as `(leftover branch reset)`, so the worktree is a fresh start rather than a hybrid of the last run and the present. Refused instead, changing nothing, if that branch holds commits its checkout lacks — a finished run whose results were never fetched, or a branch you created in one dataset on purpose. Then either `worktree fetch` it first, give the branch to every dataset, or `-f` to reset it and discard those commits.
 - **In every dataset** — a state the hierarchy once recorded, since the superdataset commit names the subdataset commits belonging with it. Checked out as it stands, reported as `(existing branch)`.
 
 So each line says which happened: `(new branch)`, `(existing branch)`, or `(leftover branch reset)`.
@@ -112,21 +112,22 @@ worktree delete <target> [options]
 
   <target>                  worktree path or branch name to delete
 
-  --delete-branch           also delete the branch (safe delete; refuses if unmerged)
+  --keep-branch             keep the branch (by default it is deleted too;
+                            safe delete, refuses if unmerged)
   -f, --force               force deletion even with uncommitted changes;
                             force-delete the branch
   -y, --yes                 skip the confirmation prompt
   -d, --dataset <path>      superdataset root (default: current directory)
 ```
 
-Deletes deepest-first, so children go before parents. Previews the directories and asks for confirmation unless `-y`. The main working tree is never a target, by path or by branch — it is reported as "not a worktree" and nothing changes.
+Deletes deepest-first, so children go before parents. Previews the directories — and the branch, which is deleted too unless `--keep-branch` — and asks for confirmation unless `-y`. The branch delete is the safe one: a branch holding commits its checkout lacks (results never fetched) is refused and kept, unless `-f`. The main working tree is never a target, by path or by branch — it is reported as "not a worktree" and nothing changes.
 
 ```bash
 worktree delete my-feature
 worktree delete /tmp/wt
 worktree delete --yes my-feature
-worktree delete --delete-branch my-feature
-worktree delete --force --delete-branch my-feature
+worktree delete --keep-branch my-feature
+worktree delete --force my-feature
 ```
 
 ## `worktree list`

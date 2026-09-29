@@ -48,13 +48,13 @@ class TestBuildParser:
         args = parser.parse_args(["delete", "feat/x"])
         assert args.command == "delete"
         assert args.target == "feat/x"
-        assert args.delete_branch is False
+        assert args.keep_branch is False
         assert args.force is False
 
     def test_delete_with_flags(self):
         parser = build_parser()
-        args = parser.parse_args(["delete", "--delete-branch", "-f", "feat/x"])
-        assert args.delete_branch is True
+        args = parser.parse_args(["delete", "--keep-branch", "-f", "feat/x"])
+        assert args.keep_branch is True
         assert args.force is True
 
 
@@ -363,7 +363,7 @@ class TestDeleteConfirmation:
         assert (superds["wt_location"] / "confirm-eof").exists()
 
     def test_delete_branch_shown_in_preview(self, superds: dict, capsys, monkeypatch):
-        """--delete-branch is mentioned in the preview."""
+        """The preview warns that the branch goes too, and how to keep it."""
         main([
             "--no-color", "add",
             "-d", str(superds["super"]),
@@ -373,10 +373,29 @@ class TestDeleteConfirmation:
 
         monkeypatch.setattr("builtins.input", lambda _: "n")
         main([
-            "--no-color", "delete", "--delete-branch",
+            "--no-color", "delete",
             "-d", str(superds["super"]),
             "feat/confirm-br",
         ])
         out = capsys.readouterr().out
         assert "delete branch" in out.lower()
         assert "feat/confirm-br" in out
+        assert "--keep-branch" in out
+
+    def test_keep_branch_not_shown_in_preview(self, superds: dict, capsys, monkeypatch):
+        """--keep-branch drops the branch warning from the preview."""
+        main([
+            "--no-color", "add",
+            "-d", str(superds["super"]),
+            "feat/confirm-keep", str(superds["wt_location"] / "confirm-keep"),
+        ])
+        capsys.readouterr()
+
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+        main([
+            "--no-color", "delete", "--keep-branch",
+            "-d", str(superds["super"]),
+            "feat/confirm-keep",
+        ])
+        out = capsys.readouterr().out
+        assert "delete branch" not in out.lower()

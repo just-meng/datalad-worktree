@@ -128,7 +128,7 @@ class TestDeleteWithForce:
         assert not wt_path.exists()
 
     def test_force_delete_branch_unmerged(self, superds: dict):
-        """--force with --delete-branch uses -D to delete unmerged branches."""
+        """--force uses -D to delete unmerged branches."""
         wt_path = _create_worktrees(superds, "rm-force-br", "feat/force-del")
 
         # Make a commit on the branch so it's "unmerged" relative to main
@@ -154,13 +154,12 @@ class TestDeleteWithForce:
 
 
 class TestDeleteWithDeleteBranch:
-    def test_deletes_branch(self, superds: dict):
+    def test_deletes_branch_by_default(self, superds: dict):
         wt_path = _create_worktrees(superds, "rm-delbr", "feat/del-branch")
 
         reports = list(delete_nested_worktrees(
             superds_path=superds["super"],
             target="feat/del-branch",
-            delete_branch=True,
         ))
         deleted_branches = [
             r for r in reports if r.result == WorktreeResult.DELETED_BRANCH
@@ -171,6 +170,21 @@ class TestDeleteWithDeleteBranch:
         # Verify the branch is gone
         out = _git(superds["super"], "branch", "--list", "feat/del-branch")
         assert out.stdout.strip() == ""
+
+    def test_keeps_branch_when_asked(self, superds: dict):
+        wt_path = _create_worktrees(superds, "rm-keepbr", "feat/keep-branch")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"],
+            target="feat/keep-branch",
+            delete_branch=False,
+        ))
+        assert not [
+            r for r in reports if r.result == WorktreeResult.DELETED_BRANCH
+        ]
+        assert not wt_path.exists()
+        out = _git(superds["super"], "branch", "--list", "feat/keep-branch")
+        assert out.stdout.strip()
 
 
 class TestDeleteFallback:
