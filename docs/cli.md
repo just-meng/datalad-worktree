@@ -8,7 +8,7 @@ datalad worktree-add runs /tmp/worktrees/runs   # DataLad extension
 python -m datalad_worktree add runs /tmp/worktrees/runs
 ```
 
-All commands run from the superdataset root, or take `-d <path>` to name it. The `datalad worktree-*` commands take the same arguments, with two differences: there is no `--no-color`, and there is no bare-command default. In the standalone CLI, output is colored when stdout is a TTY; `--no-color` disables it.
+All commands run from the superdataset root, or take `-d <path>` to name it. The `datalad worktree-*` commands take the same arguments, except that bare `worktree` defaults to `list`. Output is colored only when stdout is a terminal.
 
 This is a behaviour reference: what each command and flag does. For *why* — the annex/container problem, the mtime problem, merge vs rebase, the delete guards — see [design.md](design.md).
 

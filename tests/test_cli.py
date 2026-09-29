@@ -26,7 +26,6 @@ class TestBuildParser:
     def test_add_all_flags(self):
         parser = build_parser()
         args = parser.parse_args([
-            "--no-color",
             "add", "-n", "-f",
             "--no-create-branch",
             "-d", "/data/ds",
@@ -35,7 +34,6 @@ class TestBuildParser:
         assert args.dry_run is True
         assert args.force is True
         assert args.no_create_branch is True
-        assert args.no_color is True
         assert str(args.dataset) == "/data/ds"
 
     def test_list_command(self):
@@ -158,21 +156,21 @@ class TestMainCLI:
     def test_bare_invocation_lists(self, superds: dict, monkeypatch, capsys):
         """`worktree` with no subcommand behaves like `worktree list`."""
         main([
-            "--no-color", "add",
+            "add",
             "-d", str(superds["super"]),
             "feat/bare", str(superds["wt_location"] / "bare-test"),
         ])
         capsys.readouterr()
 
         monkeypatch.chdir(superds["super"])
-        exit_code = main(["--no-color"])
+        exit_code = main([])
         out = capsys.readouterr().out
         assert exit_code == 0
         assert "feat/bare" in out
 
     def test_add_dry_run_succeeds(self, superds: dict):
         exit_code = main([
-            "--no-color", "add",
+            "add",
             "--dry-run",
             "-d", str(superds["super"]),
             "feat/cli", str(superds["wt_location"] / "test-cli"),
@@ -181,7 +179,7 @@ class TestMainCLI:
 
     def test_add_not_a_repo_returns_1(self, tmp_path):
         exit_code = main([
-            "--no-color", "add",
+            "add",
             "-d", str(tmp_path),
             "b", str(tmp_path / "wt"),
         ])
@@ -189,7 +187,7 @@ class TestMainCLI:
 
     def test_add_full_run(self, superds: dict):
         exit_code = main([
-            "--no-color", "add",
+            "add",
             "-d", str(superds["super"]),
             "feat/cli-full", str(superds["wt_location"] / "cli-full"),
         ])
@@ -202,7 +200,7 @@ class TestMainCLI:
 
     def test_list_succeeds(self, superds: dict):
         exit_code = main([
-            "--no-color", "list",
+            "list",
             "-d", str(superds["super"]),
         ])
         assert exit_code == 0
@@ -210,13 +208,13 @@ class TestMainCLI:
     def test_delete_by_branch_succeeds(self, superds: dict):
         # First create worktrees
         main([
-            "--no-color", "add",
+            "add",
             "-d", str(superds["super"]),
             "feat/rm-test", str(superds["wt_location"] / "rm-test"),
         ])
         # Then delete them
         exit_code = main([
-            "--no-color", "delete",
+            "delete",
             "-d", str(superds["super"]),
             "feat/rm-test",
         ])
@@ -226,12 +224,12 @@ class TestMainCLI:
     def test_delete_by_path_succeeds(self, superds: dict):
         wt_path = superds["wt_location"] / "rm-path-test"
         main([
-            "--no-color", "add",
+            "add",
             "-d", str(superds["super"]),
             "feat/rm-path", str(wt_path),
         ])
         exit_code = main([
-            "--no-color", "delete",
+            "delete",
             "-d", str(superds["super"]),
             str(wt_path),
         ])
@@ -244,7 +242,7 @@ class TestCLISummaryOutput:
 
     def test_add_and_delete_summary_lines(self, superds: dict, capsys):
         main([
-            "--no-color", "add",
+            "add",
             "-d", str(superds["super"]),
             "feat/sum", str(superds["wt_location"] / "sum-test"),
         ])
@@ -252,7 +250,7 @@ class TestCLISummaryOutput:
         assert "4 created" in add_out
 
         main([
-            "--no-color", "delete",
+            "delete",
             "-d", str(superds["super"]),
             "feat/sum",
         ])
@@ -261,7 +259,7 @@ class TestCLISummaryOutput:
 
     def test_add_dry_run_summary(self, superds: dict, capsys):
         main([
-            "--no-color", "add",
+            "add",
             "--dry-run",
             "-d", str(superds["super"]),
             "feat/sum-dry", str(superds["wt_location"] / "sum-dry"),
@@ -280,7 +278,7 @@ class TestCLISummaryOutput:
             shutil.rmtree(git_entry)
 
         main([
-            "--no-color", "add",
+            "add",
             "-d", str(superds["super"]),
             "feat/sum-skip", str(superds["wt_location"] / "sum-skip"),
         ])
@@ -289,7 +287,7 @@ class TestCLISummaryOutput:
 
     def test_delete_summary_with_skipped(self, superds: dict, capsys):
         main([
-            "--no-color", "delete",
+            "delete",
             "-d", str(superds["super"]),
             "nonexistent/branch/xyz",
         ])
@@ -303,7 +301,7 @@ class TestDeleteOutput:
 
     def test_deletes_without_asking(self, superds: dict, monkeypatch):
         main([
-            "--no-color", "add",
+            "add",
             "-d", str(superds["super"]),
             "feat/no-prompt", str(superds["wt_location"] / "no-prompt"),
         ])
@@ -313,7 +311,7 @@ class TestDeleteOutput:
 
         monkeypatch.setattr("builtins.input", no_input)
         exit_code = main([
-            "--no-color", "delete",
+            "delete",
             "-d", str(superds["super"]),
             "feat/no-prompt",
         ])
@@ -323,14 +321,14 @@ class TestDeleteOutput:
     def test_branch_deletion_is_announced(self, superds: dict, capsys):
         """The branch goes by default, so the output says how to keep it."""
         main([
-            "--no-color", "add",
+            "add",
             "-d", str(superds["super"]),
             "feat/announce", str(superds["wt_location"] / "announce"),
         ])
         capsys.readouterr()
 
         main([
-            "--no-color", "delete",
+            "delete",
             "-d", str(superds["super"]),
             "feat/announce",
         ])
@@ -340,14 +338,14 @@ class TestDeleteOutput:
 
     def test_keep_branch_announces_no_branch_deletion(self, superds: dict, capsys):
         main([
-            "--no-color", "add",
+            "add",
             "-d", str(superds["super"]),
             "feat/announce-keep", str(superds["wt_location"] / "announce-keep"),
         ])
         capsys.readouterr()
 
         main([
-            "--no-color", "delete", "--keep-branch",
+            "delete", "--keep-branch",
             "-d", str(superds["super"]),
             "feat/announce-keep",
         ])

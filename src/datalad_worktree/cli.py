@@ -112,13 +112,6 @@ def build_parser():
         prog="worktree",
         description="Manage nested git worktrees for DataLad dataset hierarchies.",
     )
-    parser.add_argument(
-        "--no-color",
-        action="store_true",
-        default=False,
-        help="disable colored output",
-    )
-
     sub = parser.add_subparsers(dest="command")
 
     # ── add ──────────────────────────────────────────────────────────────
@@ -422,7 +415,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.no_color or not sys.stdout.isatty():
+    if not sys.stdout.isatty():
         _Colors.disable()
 
     if args.command is None:
