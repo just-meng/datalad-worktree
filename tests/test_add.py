@@ -99,11 +99,12 @@ class TestGitWorktreeAdd:
         assert dest.exists()
         assert (dest / ".git").exists()
 
-    def test_checkout_existing_branch(self, datalad_ds: Path, tmp_path: Path):
+    def test_reset_existing_branch(self, datalad_ds: Path, tmp_path: Path):
         _git(datalad_ds, "branch", "existing-branch")
         dest = tmp_path / "wt"
-        result, msg = _git_worktree_add(datalad_ds, dest, "existing-branch")
-        assert result == WorktreeResult.CREATED
+        result, msg = _git_worktree_add(datalad_ds, dest, "existing-branch",
+                                        reset_branch=True)
+        assert result == WorktreeResult.CREATED_RESET_BRANCH
         assert dest.exists()
 
 
@@ -425,16 +426,14 @@ def _branch_of(repo: Path) -> str:
     return _git(repo, "branch", "--show-current").stdout.strip()
 
 
-class TestLeftoverBranches:
+class TestExistingBranches:
     """
-    A branch already present in *some* datasets is a leftover, not a state.
+    An existing branch always starts from the checkout's HEAD.
 
-    `worktree delete` keeps branches by default, so the next `add` on the same
-    name used to check them out -- silently resurrecting the previous run's
-    code and outputs in those datasets while the others started fresh. A
-    branch present in *every* dataset is different: the superdataset commit
-    names the subdataset commits that belong with it, so that is a recorded
-    state somebody may want back, and it is left alone.
+    Checking it out where it sat resurrected an earlier run's code and outputs
+    -- in some datasets only, when the branch was a leftover there, or in all
+    of them, which contradicted a new worktree being a fresh start. Resuming
+    a kept branch is explicit: --follow-parent <branch>, under a new name.
     """
 
     def _leftover_in_sub02(self, superds: dict, *, ahead: bool) -> Path:
@@ -466,13 +465,12 @@ class TestLeftoverBranches:
         assert _head(worktree / "sub-02") == _head(sub02)
         assert (worktree / "sub-02" / "moved-on.txt").exists()
 
-    def test_branch_in_every_dataset_is_checked_out_as_is(self, superds: dict):
-        """A state recorded across the hierarchy is not a leftover."""
+    def test_branch_in_every_dataset_starts_fresh_too(self, superds: dict):
+        """Present everywhere is no exception: the worktree starts from HEAD."""
         datasets = [superds["super"], superds["sub01"],
                     superds["sub01_deriv"], superds["sub02"]]
         for ds in datasets:
             _git(ds, "branch", "runs")
-        recorded = _head(superds["super"])
         _commit_in(superds["super"], "later-work.txt")   # main moves on
         worktree = superds["wt_location"] / "wt"
 
@@ -481,10 +479,28 @@ class TestLeftoverBranches:
         )
 
         assert _all_ok(reports)
-        assert not [r for r in reports
-                    if r.result == WorktreeResult.CREATED_RESET_BRANCH]
+        reset = [r for r in reports
+                 if r.result == WorktreeResult.CREATED_RESET_BRANCH]
+        assert len(reset) == len(datasets)
+        assert _head(worktree) == _head(superds["super"])
+        assert (worktree / "later-work.txt").exists()
+
+    def test_a_kept_branch_resumes_under_a_new_name(self, superds: dict):
+        """--follow-parent <branch> is how an earlier run's state comes back."""
+        _git(superds["super"], "checkout", "-q", "-b", "runs")
+        _commit_in(superds["super"], "run-output.txt")
+        recorded = _head(superds["super"])
+        _git(superds["super"], "checkout", "-q", "-")
+        worktree = superds["wt_location"] / "wt"
+
+        reports = _run_create(
+            superds_path=superds["super"], worktree_path=worktree, branch="runs2",
+            follow_parent=True, at_commit="runs",
+        )
+
+        assert _all_ok(reports)
         assert _head(worktree) == recorded
-        assert not (worktree / "later-work.txt").exists()
+        assert (worktree / "run-output.txt").exists()
 
     def test_refuses_when_the_leftover_holds_unfetched_commits(self, superds: dict):
         """A finished run whose results were never fetched is not discarded."""

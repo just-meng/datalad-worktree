@@ -32,10 +32,10 @@
 
 ## `add`
 
-- **Branch reuse is decided across the hierarchy,** because only there does the question have an answer.
-  - A branch in *every* dataset is a state the hierarchy recorded: the superdataset commit names the matching subdataset commits. So it is checked out untouched.
-  - A branch in only *some* datasets describes no state, so those are reset. Checking them out as they stood resurrected the last run's code and outputs next to fresh datasets.
-  - Resetting moves a pointer, so a leftover holding unfetched commits refuses.
+- **An existing branch always starts at HEAD.** A new worktree is a fresh start, like the replacement below.
+  - Checking an existing branch out where it sat resurrected an earlier run's code and outputs, in the datasets that still had it.
+  - An older rule excepted a branch present in *every* dataset, as a state the hierarchy had recorded. That made the result depend on history the user could not see. Going back to a recorded state is now explicit: `--follow-parent <branch-or-commit>`.
+  - Resetting moves a pointer, so a branch holding unfetched commits refuses.
 - **Replace by default** (#28). Worktrees are meant to be disposable: one that is merged or behind holds nothing but stale mtimes. A long-lived one also accumulates untracked `.snakemake` records holding the *text* of each command, so a later rule edit trips Snakemake's `code` rerun trigger. The branch goes too, so the new worktree starts from the main checkout, not from the old run.
 - **All-or-nothing pre-flight.** A half-created hierarchy is harder to clean up than a refusal. `-n` runs the same checks: a dry run that promises what the real run refuses is worse than none.
 - **`--follow-parent`** (#29). A subdataset's branch tip and the commit its parent records are different things. Checking out the tip is how a fresh worktree was born with a modified gitlink. The recorded commits are checked for existence before anything is created; otherwise git fails partway, after the superdataset worktree already exists.
@@ -58,7 +58,7 @@
   - Mainness is asked of git per path (`--git-dir` equals `--git-common-dir`). Inferring it from the resolved dataset made the real main checkout look linked when run from inside a worktree.
   - A `.git`-is-a-directory test is wrong both ways and fails four tests.
 - **The `rmtree` fallback never overrules git's refusal of a dirty worktree.** `git worktree remove` fails on every DataLad worktree, whose `.git` is not a gitlink file, so the fallback ran every time. It deleted uncommitted and untracked work without `-f`. It now runs only on a clean worktree. A subdataset directory the command itself just deleted does not count as a change.
-- **The branch goes by default.** A kept branch is a leftover the next `add` has to reset. `git branch -d` still refuses an unmerged one.
+- **The branch goes by default.** A kept branch is one the next `add` has to reset. `git branch -d` still refuses an unmerged one.
 - **No confirmation prompt.** Refusing dirty worktrees and unmerged branches is the protection. A prompt only added friction, and it blocked non-interactive callers such as scripts and agents. `-n` previews.
 
 ## `list`

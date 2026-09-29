@@ -77,14 +77,13 @@ class TestRenderReport:
         assert "create" in out
         assert "sub-01" in out
         assert "/dst/sub-01" in out
-        assert "(existing branch)" in out
 
     def test_created_reset_branch(self, capsys):
-        """The two things add can do with an existing branch must read apart."""
+        """A reset existing branch must read apart from a new one."""
         _render_report(self._make_report(WorktreeResult.CREATED_RESET_BRANCH))
         out = capsys.readouterr().out
         assert "create" in out
-        assert "(leftover branch reset)" in out
+        assert "(existing branch reset)" in out
 
     def test_created_new_branch(self, capsys):
         _render_report(self._make_report(WorktreeResult.CREATED_NEW_BRANCH))

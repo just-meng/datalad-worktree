@@ -56,13 +56,11 @@ def _git_worktree_add(
         result_type = (WorktreeResult.CREATED_RESET_BRANCH if flag == "-B"
                        else WorktreeResult.CREATED_NEW_BRANCH)
     elif reset_branch:
-        # -B moves the branch to this checkout's HEAD instead of checking it
-        # out where it happens to sit. See branches_to_reset().
+        # -B moves an existing branch to this checkout's HEAD, so a new
+        # worktree always starts from the checkout rather than from wherever
+        # an earlier run left the branch.
         cmd.extend(["-B", branch, str(dest_path)])
         result_type = WorktreeResult.CREATED_RESET_BRANCH
-    elif git_branch_exists(repo_path, branch):
-        cmd.extend([str(dest_path), branch])
-        result_type = WorktreeResult.CREATED
     else:
         cmd.extend(["-b", branch, str(dest_path)])
         result_type = WorktreeResult.CREATED_NEW_BRANCH
@@ -170,31 +168,6 @@ def branch_presence(
     return rows
 
 
-def branches_to_reset(rows: list[tuple[str, Path, bool]]) -> set[str]:
-    """
-    Which datasets hold a leftover branch rather than part of a recorded state.
-
-    A branch present in *every* dataset describes one state of the whole
-    hierarchy -- the superdataset's commit names the subdataset commits that go
-    with it -- so checking it out is a deliberate thing to do, and it is left
-    alone. A branch present in only *some* of them cannot describe a state:
-    the datasets that lack it would get a fresh branch off their current HEAD
-    while the others returned to wherever the last run left them, which is a
-    hierarchy nobody chose. Those leftovers are reset to their dataset's
-    current HEAD, which is what makes a new worktree a fresh start.
-
-    Note that "present everywhere" does not guarantee the recorded state is
-    *self-consistent*: a subdataset branch whose tip moved past the commit the
-    superdataset's branch records yields a worktree with a dirty gitlink. That
-    is visible in `git status` and is not repaired here -- re-saving the
-    superdataset is the fix.
-    """
-    present = {dataset_path for dataset_path, _repo, has in rows if has}
-    if not present or len(present) == len(rows):
-        return set()
-    return present
-
-
 def branch_beyond_head(repo_path: Path, branch: str) -> int | None:
     """
     How many commits ``branch`` holds that ``HEAD`` does not.
@@ -240,7 +213,8 @@ def unmerged_branches(
         )
         blocked.append((
             dataset_path,
-            f"branch '{branch}' {detail}; fetch them first, "
+            f"branch '{branch}' {detail}; fetch them first, resume them "
+            f"under a new name with --follow-parent {branch}, "
             f"or use --force to reset it anyway",
         ))
     return blocked
@@ -509,17 +483,12 @@ def create_nested_worktrees(
                 message=why,
             )
 
-    # ── Leftover branches from an earlier run ────────────────────────────
-    # Decided across the whole hierarchy, before anything is created, so that
-    # the pre-flight and the dry run can both report it.
+    # ── Existing branches ────────────────────────────────────────────────
+    # Every existing branch is moved: to this checkout's HEAD, or under
+    # --follow-parent to the recorded commit. Decided before anything is
+    # created, so that the pre-flight and the dry run can both report it.
     presence = branch_presence(superds_path, branch, subdatasets)
-    if follow_parent:
-        # Every existing branch will be moved to a recorded commit, so the
-        # unmerged-work guard has to consider all of them, not just the
-        # ones the some/all rule would have reset.
-        to_reset = {d for d, _repo, has in presence if has}
-    else:
-        to_reset = branches_to_reset(presence)
+    to_reset = {d for d, _repo, has in presence if has}
 
     if to_reset and not discard_unmerged:
         blocked = unmerged_branches(presence, to_reset, branch)
@@ -560,8 +529,7 @@ def create_nested_worktrees(
         """Dry-run message, so `-n` says when a branch would be moved."""
         if dataset_path not in to_reset:
             return "would create"
-        return (f"would create, resetting leftover branch '{branch}' "
-                f"to this checkout's HEAD")
+        return f"would create, resetting existing branch '{branch}'"
 
     # ── Create super dataset worktree ────────────────────────────────────
     if dry_run:

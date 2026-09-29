@@ -36,7 +36,7 @@ worktree delete runs                    # dispose of it — or overwrite with `w
 └── results/
 ```
 
-Each is on branch `runs`, starting from that dataset's current state. What happens when `runs` already exists is in [docs/cli.md](docs/cli.md#worktree-add).
+Each is on branch `runs`, starting from that dataset's current state, even if `runs` already exists.
 
 `fetch` brings the worktree's commits back into each dataset's main checkout, deepest first, then copies their mtimes across. `delete` removes the worktree from every dataset, deepest first, along with its branch.
 

@@ -358,11 +358,8 @@ class TestSafety:
         worktree does not have.
         """
         superds = pipeline_ds["super"]
-        # The branch has to exist in *every* dataset, otherwise `add` reads it
-        # as a leftover from an earlier run: present in only some datasets and
-        # holding a commit the checkout lacks is refused, not checked out.
-        # See branches_to_reset() in add.py.
-        _git(pipeline_ds["code"], "branch", "variant")
+        # A worktree of another state comes from --follow-parent: an existing
+        # branch is otherwise reset to the checkout's HEAD.
         _git(superds, "checkout", "-q", "-b", "variant")
         _git(superds, "annex", "unlock", "out.txt")
         (superds / "out.txt").write_text("a different result\n")
@@ -370,7 +367,8 @@ class TestSafety:
         _git(superds, "checkout", "-q", "master")
         _set_mtime(superds / "out.txt", OUTPUT_MTIME_NS)
 
-        worktree = _add(pipeline_ds, "wt", "variant")
+        worktree = _add(pipeline_ds, "wt", "wt-variant",
+                        follow_parent=True, at_commit="variant")
 
         assert os.lstat(worktree / "out.txt").st_mtime_ns != OUTPUT_MTIME_NS
         # ...while everything that did not diverge is still carried over.

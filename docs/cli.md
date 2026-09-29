@@ -37,13 +37,18 @@ worktree add -f runs /tmp/worktrees/runs   # ... even if it holds commits never 
 
 ### Existing branches
 
-| `branch` exists in | Each dataset's worktree | Reported as |
-|---|---|---|
-| no dataset | new branch at that dataset's HEAD | `(new branch)` |
-| every dataset | branch checked out as it stands | `(existing branch)` |
-| some datasets | branch reset to that dataset's HEAD | `(leftover branch reset)` |
+`branch` always starts at each dataset's HEAD. It is created where it is missing, reported as `(new branch)`, and reset where it exists, reported as `(existing branch reset)`.
 
-Resetting refuses if the branch holds commits its checkout lacks. `worktree fetch` it first, or `-f` to discard them.
+Resetting refuses if the branch holds commits its checkout lacks. You then have three ways out:
+
+- **Bring them in:** `worktree fetch` the branch first.
+- **Keep working on them** under a new branch name:
+
+  ```bash
+  worktree add runs2 /tmp/wt --follow-parent runs
+  ```
+
+- **Throw them away:** `-f` resets the branch anyway.
 
 ### Replacing an existing worktree
 
@@ -51,7 +56,7 @@ A worktree already at `<worktree-path>` is deleted, branch included, and created
 
 ### Pre-flight
 
-Before creating anything, `add` checks every dataset. It verifies the branch isn't checked out elsewhere, the superdataset's destination is free, and no leftover branch holds commits its checkout lacks. If any check fails, nothing is created. `-n` runs the same checks.
+Before creating anything, `add` checks every dataset. It verifies the branch isn't checked out elsewhere, the superdataset's destination is free, and no existing branch holds commits its checkout lacks. If any check fails, nothing is created. `-n` runs the same checks.
 
 - **Replacement runs before these checks,** so if a check then fails, the old worktree is already gone.
 - **Once creation starts,** a failing subdataset doesn't stop the others. A failing superdataset stops everything.
