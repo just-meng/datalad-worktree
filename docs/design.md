@@ -1,31 +1,73 @@
 # Design notes
 
-Why the commands behave as they do. Flags, invocation and output: [cli.md](cli.md) — that file describes behaviour, this one only argues.
+## Containers
 
-## Two things break in a worktree
+- **Per-worktree config, not committed config.** `add` writes the bind-mount option and a `cmdexec` carrying `{{bindpaths}}` with `git config --worktree`. The paths are machine-specific, so they stay out of the main checkout and out of history.
+- **One empty `bindpaths` is committed** to `.datalad/config`. `datalad run` records the command with `{{bindpaths}}` unexpanded, so a record made in a worktree only reruns elsewhere if the name resolves there too, to nothing.
+- **Only the superdataset is configured** (#27). Committing that placeholder inside a subdataset would put the subdataset one commit past what the superdataset records for it, so every new worktree would start with the subdataset showing as modified. The cost: a container registered in a subdataset gets no bind paths.
 
-**Containers cannot read annexed files.** A worktree's `.git` links into the main repository, so annex symlinks resolve outside the worktree and `datalad containers-run` fails on every annexed input ([datalad-container#288](https://github.com/datalad/datalad-container/issues/288)). `add` writes the bind-mount option and a `{{bindpaths}}`-carrying `cmdexec` with `git config --worktree`, keeping machine-specific paths out of the main checkout and out of history — plus one *empty* `bindpaths` committed to `.datalad/config`, because `run` records substitutions unexpanded and a record made in a worktree must stay rerunnable elsewhere. Superdataset only (issue #27): the path being written is the superdataset's own, and committing that line inside a subdataset moves it past the gitlink the superdataset just recorded, so the worktree is born ` M sub-01`.
+## mtimes
 
-**A fresh checkout has no mtimes,** and for a make-style pipeline the mtime ordering between inputs and outputs **is** the up-to-date state. It is not merely lost but inverted: git checks the superdataset out before its subdatasets, so every `code/` file ends up newer than every output derived from it. `mtimes.py` copies mtimes from the working tree the worktree came from — directories too, since Snakemake reads a `directory()` output's staleness off the directory itself, or off the `.snakemake_timestamp` inside it when there is one. That marker is what `snakemake --touch` stamps, and it is conventionally gitignored, so it is carried across as well; otherwise a touched output looked stale in every fresh worktree (issue #39) — and runs **last**, after every worktree exists, because the ordering being repaired is the cross-dataset one. Three rules keep it safe: match on **blob OID, not path**, so only byte-identical content inherits a timestamp (and skip paths dirty on either side); never follow symlinks, since annexed files point into an object store *shared* with the main repository; and skip unlocked annexed files, because git's index is a stat cache and restamping one forces a re-hash through git-annex's clean filter — stamping 10099 symlinks cost the next `git status` 0.11 s, stamping 28 unlocked files totalling 3.71 GB cost it **152 s**.
+**The tension.** Snakemake decides what to rerun by comparing mtimes, but git and DataLad carry content, not timestamps. That breaks in both directions:
 
-## Add
+- **Creating a worktree.** The checkout stamps every file "now", and the superdataset goes before its subdatasets. Every `code/` file then ends up newer than every output derived from it, so everything looks stale.
+- **Bringing results home.** `datalad run` in the worktree updates mtimes only there. A merge moves only what it rewrites, which misses two cases:
+  - A changed output moves its file and parent directory, but never the grandparent that a `directory()` output is judged by.
+  - A byte-identical output makes no commit, so nothing moves at all.
 
-Subdatasets are discovered by recursively parsing `.gitmodules` with `configparser` — no DataLad call, no gitpython. A pre-flight validates every dataset before anything is created (branch not checked out elsewhere, destination free): all-or-nothing. The superdataset worktree leaves gitlink files at each submodule mount point, cleared before the subdataset worktrees go in.
+  Without transporting mtimes, the main checkout reruns work the worktree already did.
 
-Reusing a branch is decided hierarchy-wide, the only level at which the question has an answer. Present in *every* dataset it is a state the hierarchy once recorded — the superdataset commit names the subdataset commits belonging with it — so it is checked out untouched. Present in only *some* it describes no state, so those are reset to their dataset's HEAD; otherwise a name reused after `delete` (which then kept branches by default) resurrected the last run's code and outputs. Resetting moves a pointer, so a leftover carrying unfetched commits refuses. Replacing an existing worktree is the default (issue #28) — merged or behind, it holds nothing but stale mtimes — but a directory git does not call a worktree is never deleted.
+**What we do:**
 
-## Fetch
+- **Copy mtimes from the other working tree:** main → worktree on `add`, worktree → main on `fetch`. It runs last, once every worktree exists, because the ordering being repaired crosses datasets.
+- **Directories too,** because Snakemake judges a `directory()` output by the directory's own mtime.
+- **Snakemake's `.snakemake_timestamp` markers too** (#39). When a marker exists, Snakemake reads it instead of the directory, and `snakemake --touch` stamps only the marker. Markers are gitignored, so without this a touched output looked stale in every fresh worktree. The marker is created before its directory is stamped, because creating a file moves its directory's mtime.
 
-Transport deepest-first, so a gitlink never arrives before the commit it names, then restamp mtimes from the worktree. **That restamp is the point**: git moves only what it rewrites, so a changed output never moves its *grandparent* directory and a byte-identical one produces no commit at all — the work is done and the pipeline would redo it.
+**What keeps it safe:**
 
-Fast-forward where our side holds no commits of its own; merge, never rebase, where both sides moved, because a superdataset records subdataset states *by hash*. Verified: after rebasing a subdataset, the commit the superdataset recorded sits on no branch and is no longer an ancestor of the tip; after merging it stays one. Conflict handling does not decide this (both stop in a conflicted tree), nor does the dirty tree (`rebase --autostash`).
+- **Match on blob OID, not path,** so only byte-identical content inherits a timestamp. Skip paths that are dirty on either side.
+- **Never follow symlinks.** Annexed files point into an object store *shared* with the main repository.
+- **Skip unlocked annexed files.** git's index is a stat cache, so restamping one forces a re-hash through git-annex's clean filter. Stamping 10099 symlinks cost the next `git status` 0.11 s; stamping 28 unlocked files totalling 3.71 GB cost it **152 s**.
+- **No mtimes reconstructed from commit dates** (the `git-restore-mtime` approach). These repositories are routinely rewritten by jj squash and rebase, which would make every file look new.
 
-Divergence is judged, not refused — recording a subdataset's new state is itself a superdataset commit, so both sides always have commits. `git merge-tree --write-tree` merges in memory: sides that moved *different* paths merge cleanly; the same gitlink moved on both refuses, since re-saving the superdataset would not resolve it. The pre-flight checks *collisions*, not cleanliness, because refusing on any dirty file blocks the workflow the command exists for; and `behind` is "nothing to ship", not a conflict.
+## `add`
 
-## Delete, list, and the rest
+- **Branch reuse is decided across the hierarchy,** because only there does the question have an answer.
+  - A branch in *every* dataset is a state the hierarchy recorded: the superdataset commit names the matching subdataset commits. So it is checked out untouched.
+  - A branch in only *some* datasets describes no state, so those are reset. Checking them out as they stood resurrected the last run's code and outputs next to fresh datasets.
+  - Resetting moves a pointer, so a leftover holding unfetched commits refuses.
+- **Replace by default** (#28). Worktrees are meant to be disposable: one that is merged or behind holds nothing but stale mtimes. A long-lived one also accumulates untracked `.snakemake` records holding the *text* of each command, so a later rule edit trips Snakemake's `code` rerun trigger. The branch goes too, so the new worktree starts from the main checkout, not from the old run.
+- **All-or-nothing pre-flight.** A half-created hierarchy is harder to clean up than a refusal. `-n` runs the same checks: a dry run that promises what the real run refuses is worse than none.
+- **`--follow-parent`** (#29). A subdataset's branch tip and the commit its parent records are different things. Checking out the tip is how a fresh worktree was born with a modified gitlink. The recorded commits are checked for existence before anything is created; otherwise git fails partway, after the superdataset worktree already exists.
+- **Discovery reads `.gitmodules` with `configparser`,** with no DataLad call and no gitpython, so DataLad stays optional.
 
-The main working tree is never a delete target. `git worktree list` reports it beside the linked ones, so a branch lookup landed on it, `git worktree remove` refused it, and the `rmtree` fallback destroyed the dataset — annexed ones survived only because `rmtree` trips on mode-555 annex directories. Mainness is asked of git per path (`--git-dir` equals `--git-common-dir`), not inferred from the resolved dataset, which made the real main checkout look linked when run from *inside* a worktree. A `.git`-is-a-directory test is wrong in both directions and fails four tests. The same fallback once overruled git's refusal of a dirty worktree too: `git worktree remove` fails on every DataLad worktree (its `.git` is not a gitlink file), so `rmtree` ran every time and deleted uncommitted and untracked work without `-f`. It now runs only when the worktree is clean, where a subdataset directory the command itself just deleted does not count as a change.
+## `fetch`
 
-`list` prunes each dataset before reading it, and groups by hierarchy rather than by branch, since subdatasets routinely sit on a detached HEAD (issue #13).
+- **Deepest first,** so a gitlink never arrives before the commit it names.
+- **Merge, never rebase, where both sides moved.** A superdataset records subdataset states *by hash*, and a rebase replaces those hashes.
+  - Verified: after rebasing a subdataset, the commit the superdataset recorded is on no branch and no longer an ancestor of the tip. After a merge it stays one.
+  - Neither conflict handling nor a dirty tree decides this: both operations stop in a conflicted tree, and `rebase --autostash` handles a dirty one.
+- **Divergence is judged, not refused.** Recording a subdataset's new state is itself a superdataset commit, so both sides almost always have commits. `git merge-tree --write-tree` merges in memory: different paths merge cleanly, while the same gitlink moved on both sides refuses, because re-saving the superdataset would not resolve it.
+- **The pre-flight checks collisions, not cleanliness.** Refusing on any dirty file would block the workflow the command exists for: developing in main while the worktree runs.
+- **`behind` is "nothing to ship"**, not a conflict. It is the normal state of a `code/` subdataset the worktree only consumed.
 
-Generators yield one `WorktreeReport` per dataset, so both front-ends render the same stream; all git access is `subprocess.run(..., capture_output=True, text=True)`; a failed subdataset never aborts the rest, only a superdataset failure is fatal. And worktrees are meant to be disposable: a long-lived one accumulates untracked `.snakemake` records holding the *text* of each command, so a later rule edit trips Snakemake's `code` rerun trigger. One that has never run is cleaner than one that has.
+## `delete`
+
+- **The main working tree is never a target.**
+  - `git worktree list` reports it beside the linked worktrees, so a branch lookup landed on it and the `rmtree` fallback destroyed the dataset. Annexed ones survived only because `rmtree` trips on mode-555 annex directories.
+  - Mainness is asked of git per path (`--git-dir` equals `--git-common-dir`). Inferring it from the resolved dataset made the real main checkout look linked when run from inside a worktree.
+  - A `.git`-is-a-directory test is wrong both ways and fails four tests.
+- **The `rmtree` fallback never overrules git's refusal of a dirty worktree.** `git worktree remove` fails on every DataLad worktree, whose `.git` is not a gitlink file, so the fallback ran every time. It deleted uncommitted and untracked work without `-f`. It now runs only on a clean worktree. A subdataset directory the command itself just deleted does not count as a change.
+- **The branch goes by default.** A kept branch is a leftover the next `add` has to reset. `git branch -d` still refuses an unmerged one.
+- **No confirmation prompt.** Refusing dirty worktrees and unmerged branches is the protection. A prompt only added friction, and it blocked non-interactive callers such as scripts and agents. `-n` previews.
+
+## `list`
+
+- **Prune first,** so a directory removed with `rm -rf` does not linger as a stale entry.
+- **Group by hierarchy, not by branch** (#13). Subdatasets routinely sit on a detached HEAD, and grouping by branch split one hierarchy across two headings.
+
+## Across commands
+
+- **Generators yield one `WorktreeReport` per dataset,** so the CLI and the DataLad interface render the same stream.
+- **All git access is `subprocess.run(..., capture_output=True, text=True)`.**
+- **A failed subdataset never aborts the rest;** only a superdataset failure is fatal.
