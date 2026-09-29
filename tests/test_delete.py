@@ -127,6 +127,23 @@ class TestDeleteWithForce:
         assert len(deleted) == 4
         assert not wt_path.exists()
 
+    def test_dirty_worktree_survives_without_force(self, superds: dict):
+        """git refuses a dirty worktree, and the rmtree fallback must not overrule it."""
+        wt_path = _create_worktrees(superds, "rm-dirty", "feat/rm-dirty")
+        (wt_path / "sub-02" / "untracked.txt").write_text("precious\n")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"],
+            target="feat/rm-dirty",
+        ))
+
+        assert (wt_path / "sub-02" / "untracked.txt").read_text() == "precious\n"
+        refused = [r for r in reports if r.result == WorktreeResult.FAILED]
+        assert "sub-02" in [r.dataset_path for r in refused]
+        assert "uncommitted or untracked" in refused[0].message
+        # The superdataset holds the dirty subdataset, so it survives too.
+        assert "." in [r.dataset_path for r in refused]
+
     def test_force_delete_branch_unmerged(self, superds: dict):
         """--force uses -D to delete unmerged branches."""
         wt_path = _create_worktrees(superds, "rm-force-br", "feat/force-del")
@@ -207,8 +224,9 @@ class TestDeleteFallback:
             # Already a directory (DataLad default) — this is the case we test
             pass
 
-        # _git_worktree_remove should fall back to rmtree + prune
-        err = _git_worktree_remove(superds["super"], wt_path)
+        # _git_worktree_remove should fall back to rmtree + prune. The stub
+        # .git cannot be read, so cleanliness is unknown and needs force.
+        err = _git_worktree_remove(superds["super"], wt_path, force=True)
         assert err == ""
         assert not wt_path.exists()
 

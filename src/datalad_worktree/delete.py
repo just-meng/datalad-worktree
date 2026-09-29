@@ -123,6 +123,43 @@ def _find_worktree_by_branch(
     return None, None
 
 
+def _has_local_changes(worktree_path: Path) -> bool:
+    """
+    Whether a worktree holds modified or untracked files.
+
+    The same test ``git worktree remove`` applies before refusing. Ignored
+    files do not count. A worktree git cannot read counts as changed:
+    cleanliness that cannot be shown is not assumed.
+
+    One entry is not a change: a subdataset whose directory is gone. Children
+    are deleted first, so that is the mount point this command just emptied.
+    A child that is still there and dirty shows as modified, and keeps its
+    parent from being deleted over it.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(worktree_path), "status", "--porcelain", "-z"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return True
+    for record in filter(None, result.stdout.split("\0")):
+        status, path = record[:2], record[3:]
+        if status == " D" and not (worktree_path / path).exists() \
+                and _is_gitlink(worktree_path, path):
+            continue
+        return True
+    return False
+
+
+def _is_gitlink(worktree_path: Path, path: str) -> bool:
+    """Whether ``path`` is a submodule (mode 160000) in the index."""
+    result = subprocess.run(
+        ["git", "-C", str(worktree_path), "ls-files", "-s", "--", path],
+        capture_output=True, text=True,
+    )
+    return result.stdout.startswith("160000 ")
+
+
 def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = False) -> str:
     """
     Delete a worktree. Tries `git worktree remove` first; if that fails
@@ -147,8 +184,13 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
 
     # Fallback: delete directory manually and prune. Reached when `git
     # worktree remove` fails on a DataLad repo whose .git is a directory
-    # rather than a gitlink file.
+    # rather than a gitlink file, or on a worktree containing submodules.
+    # git also fails on a dirty worktree, and rmtree must not overrule that:
+    # it would destroy exactly the work git refused to lose.
     wt = Path(worktree_path)
+    if wt.exists() and not force and _has_local_changes(wt):
+        return (f"{wt} has uncommitted or untracked changes; "
+                f"commit them, or use --force to discard them")
     if wt.exists():
         try:
             shutil.rmtree(wt)
