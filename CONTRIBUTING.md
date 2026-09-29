@@ -48,4 +48,4 @@ jj config set --repo fix.tools.ruff.patterns '["glob:**/*.py"]'
 
 Open a pull request against `master`. Keep commits focused -- one logical change per commit, with a message explaining *why*, not just *what*. `uv run ruff check .` should pass clean.
 
-See [CLAUDE.md](CLAUDE.md) for an overview of the codebase's architecture and where to make common kinds of changes.
+Why the code is shaped the way it is: [docs/design.md](docs/design.md); read the section for the command you are changing before you change it. Each module's docstring states its role. Coding agents: see [CLAUDE.md](CLAUDE.md).
