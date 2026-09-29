@@ -134,7 +134,7 @@ worktree delete <target> [options]
 Deletes the worktree in every dataset, deepest first. It does not ask for confirmation, so use `-n` to preview.
 
 - **The branch is deleted too,** unless `--keep-branch`. A branch holding commits its checkout lacks is kept and reported as an error, unless `-f`.
-- **A worktree with uncommitted or untracked changes is refused, unless `-f`.** So is every dataset above it, since deleting a parent would delete it too.
+- **All-or-nothing.** If any worktree has uncommitted or untracked changes, nothing is deleted, unless `-f`.
 - **The main working tree is never deleted.**
   - Named by path, it is reported as "the main working tree, not a worktree".
   - Named by branch, it is passed over: "no worktree on branch".

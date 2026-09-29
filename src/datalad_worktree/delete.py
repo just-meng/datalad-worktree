@@ -151,6 +151,11 @@ def _has_local_changes(worktree_path: Path) -> bool:
     return False
 
 
+def _dirty_message(worktree_path: Path) -> str:
+    return (f"{worktree_path} has uncommitted or untracked changes; "
+            f"commit them, or use --force to discard them")
+
+
 def _is_gitlink(worktree_path: Path, path: str) -> bool:
     """Whether ``path`` is a submodule (mode 160000) in the index."""
     result = subprocess.run(
@@ -189,8 +194,7 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
     # it would destroy exactly the work git refused to lose.
     wt = Path(worktree_path)
     if wt.exists() and not force and _has_local_changes(wt):
-        return (f"{wt} has uncommitted or untracked changes; "
-                f"commit them, or use --force to discard them")
+        return _dirty_message(wt)
     if wt.exists():
         try:
             shutil.rmtree(wt)
@@ -223,11 +227,7 @@ def _predict(
             )
 
         if not force and _has_local_changes(Path(t.worktree_path)):
-            yield report(
-                WorktreeResult.FAILED,
-                f"{t.worktree_path} has uncommitted or untracked changes; "
-                f"commit them, or use --force to discard them",
-            )
+            yield report(WorktreeResult.FAILED, _dirty_message(t.worktree_path))
             continue
         yield report(WorktreeResult.SKIPPED_DRY_RUN, "would delete")
 
@@ -405,6 +405,20 @@ def delete_nested_worktrees(
     if dry_run:
         yield from _predict(targets, delete_branch, force)
         return
+
+    # ── Pre-flight: all-or-nothing, like add ─────────────────────────────
+    # A dirty worktree is refused, and so is every dataset above it, so
+    # deleting the rest would leave a half-deleted hierarchy behind.
+    if not force:
+        dirty = [t for t in targets if _has_local_changes(Path(t.worktree_path))]
+        if dirty:
+            for t in dirty:
+                yield WorktreeReport(
+                    dataset_path=t.dataset_path, source=t.repo_path,
+                    destination=t.worktree_path, result=WorktreeResult.FAILED,
+                    branch=t.branch, message=_dirty_message(t.worktree_path),
+                )
+            return
 
     # Delete each target
     for t in targets:

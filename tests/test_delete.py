@@ -144,6 +144,19 @@ class TestDeleteWithForce:
         # The superdataset holds the dirty subdataset, so it survives too.
         assert "." in [r.dataset_path for r in refused]
 
+    def test_a_dirty_dataset_stops_the_whole_delete(self, superds: dict):
+        """All-or-nothing: clean siblings are not deleted around a refusal."""
+        wt_path = _create_worktrees(superds, "rm-dirty-all", "feat/rm-dirty-all")
+        (wt_path / "sub-02" / "untracked.txt").write_text("precious\n")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-dirty-all",
+        ))
+
+        assert not [r for r in reports if r.result == WorktreeResult.DELETED]
+        for clean in ("sub-01", "sub-01/derivatives"):
+            assert (wt_path / clean / ".git").exists(), clean
+
     def test_force_delete_branch_unmerged(self, superds: dict):
         """--force uses -D to delete unmerged branches."""
         wt_path = _create_worktrees(superds, "rm-force-br", "feat/force-del")
