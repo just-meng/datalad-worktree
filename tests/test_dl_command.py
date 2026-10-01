@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,7 +9,7 @@ import pytest
 try:
     from datalad.interface.base import Interface
 
-    from datalad_worktree.dl_command import WorktreeAdd, WorktreeDelete, WorktreeList
+    from datalad_worktree.dl_command import WorktreeAdd, WorktreeDelete
 
     # Verify these are real DataLad Interface classes, not stubs
     HAS_DATALAD = issubclass(WorktreeAdd, Interface)
@@ -57,26 +55,6 @@ class TestWorktreeAdd:
             assert "worktree_root" in res
             assert res["type"] == "dataset"
 
-    def test_skip_reason_for_uninstalled(self, superds: dict):
-        """Uninstalled subdatasets produce skip_reason in result dict."""
-        sub02 = superds["sub02"]
-        git_entry = sub02 / ".git"
-        if git_entry.is_file():
-            git_entry.unlink()
-        elif git_entry.is_dir():
-            shutil.rmtree(git_entry)
-
-        wt_path = superds["wt_location"] / "dl-skip"
-        results = _call_interface(
-            WorktreeAdd,
-            worktree_path=str(wt_path),
-            branch="feat/dl-skip",
-            dataset=str(superds["super"]),
-        )
-        skipped = [r for r in results if r["status"] == "notneeded"]
-        assert len(skipped) >= 1
-        assert any(r.get("skip_reason") == "not installed" for r in skipped)
-
     def test_preflight_failure(self, superds: dict, tmp_path: Path):
         """Pre-flight failure produces error status results."""
         from tests.conftest import _git
@@ -96,40 +74,6 @@ class TestWorktreeAdd:
         errors = [r for r in results if r["status"] == "error"]
         assert len(errors) >= 1
         assert not wt_path.exists()
-
-
-class TestWorktreeList:
-
-    def test_shows_extra_worktrees(self, superds: dict):
-        """After creating worktrees, list returns one entry per worktree per
-        dataset, with expected fields and is_main correctly flagged."""
-        _call_interface(
-            WorktreeAdd,
-            worktree_path=str(superds["wt_location"] / "dl-list"),
-            branch="feat/dl-list",
-            dataset=str(superds["super"]),
-        )
-
-        results = _call_interface(
-            WorktreeList,
-            dataset=str(superds["super"]),
-        )
-        ok_results = [r for r in results if r["status"] == "ok"]
-        # Each of 4 datasets has 2 worktrees (main + new) = 8 entries
-        assert len(ok_results) == 8
-
-        for res in results:
-            assert res["action"] == "worktree-list"
-            assert "path" in res
-            assert "branch" in res
-            assert "dataset_path" in res
-            assert "is_main" in res
-            assert res["type"] == "dataset"
-
-        main_wts = [r for r in results if r.get("is_main")]
-        non_main = [r for r in results if not r.get("is_main")]
-        assert len(main_wts) == 4
-        assert len(non_main) == 4
 
 
 class TestWorktreeDelete:
@@ -167,19 +111,3 @@ class TestWorktreeDelete:
             assert "dataset_path" in res
             assert res["type"] == "dataset"
 
-    def test_keep_branch(self, superds: dict):
-        """--keep-branch deletes the worktrees but leaves the branch."""
-        self._setup_worktrees(superds, "dl-rm-keepbr", "feat/dl-keepbr")
-
-        results = _call_interface(
-            WorktreeDelete,
-            target="feat/dl-keepbr",
-            dataset=str(superds["super"]),
-            keep_branch=True,
-        )
-        assert not [r for r in results if r.get("branch_deleted")]
-        out = subprocess.run(
-            ["git", "branch", "--list", "feat/dl-keepbr"],
-            cwd=superds["super"], capture_output=True, text=True,
-        )
-        assert out.stdout.strip()

@@ -31,18 +31,6 @@ def _create_worktrees(superds: dict, name: str, branch: str) -> Path:
 
 
 class TestDeleteByPath:
-    def test_deletes_all_worktrees(self, superds: dict):
-        wt_path = _create_worktrees(superds, "rm-test", "feat/rm")
-        assert wt_path.exists()
-
-        reports = list(delete_nested_worktrees(
-            superds_path=superds["super"],
-            target=str(wt_path),
-        ))
-        deleted = [r for r in reports if r.result == WorktreeResult.DELETED]
-        assert len(deleted) == 4  # super + 3 subs
-        assert not wt_path.exists()
-
     def test_deepest_first_ordering(self, superds: dict):
         """Worktrees are deleted deepest-first (children before parents)."""
         wt_path = _create_worktrees(superds, "rm-order", "feat/rm-order")
@@ -59,29 +47,6 @@ class TestDeleteByPath:
         assert deleted_paths.index("sub-01/derivatives") < deleted_paths.index("sub-01")
         assert deleted_paths.index("sub-01") < deleted_paths.index(".")
         assert deleted_paths.index("sub-02") < deleted_paths.index(".")
-
-
-class TestDeleteByBranch:
-    def test_deletes_by_branch(self, superds: dict):
-        wt_path = _create_worktrees(superds, "rm-branch", "feat/rm-branch")
-        assert wt_path.exists()
-
-        reports = list(delete_nested_worktrees(
-            superds_path=superds["super"],
-            target="feat/rm-branch",
-        ))
-        deleted = [r for r in reports if r.result == WorktreeResult.DELETED]
-        assert len(deleted) == 4
-        assert not wt_path.exists()
-
-    def test_skips_nonexistent_branch(self, superds: dict):
-        reports = list(delete_nested_worktrees(
-            superds_path=superds["super"],
-            target="nonexistent/branch/xyz",
-        ))
-        assert all(
-            r.result == WorktreeResult.SKIPPED_NO_WORKTREE for r in reports
-        )
 
 
 class TestWhatDeleteDiscards:

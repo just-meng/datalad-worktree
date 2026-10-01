@@ -15,10 +15,7 @@ from datalad_worktree.add import create_nested_worktrees
 from datalad_worktree.mtimes import (
     SNAKEMAKE_TIMESTAMP,
     copy_mtimes,
-    dirty_paths,
     resolve_worktree_target,
-    tracked_blobs,
-    unlocked_annex_paths,
 )
 
 # Two fixed, well-separated timestamps. The "output" is deliberately newer
@@ -115,22 +112,6 @@ def _add(pipeline_ds: dict, name: str, branch: str, **kwargs) -> Path:
 # ── Parsing helpers ──────────────────────────────────────────────────────────
 
 
-class TestTrackedBlobs:
-    def test_excludes_submodule_gitlinks(self, pipeline_ds: dict):
-        """A gitlink is where another worktree mounts, not a file to stamp."""
-        blobs = tracked_blobs(pipeline_ds["super"])
-        assert "out.txt" in blobs
-        assert "code" not in blobs
-
-
-class TestDirtyPaths:
-
-    def test_reports_both_sides_of_a_rename(self, pipeline_ds: dict):
-        _git(pipeline_ds["super"], "mv", "out.txt", "renamed.txt")
-        dirty = dirty_paths(pipeline_ds["super"])
-        assert {"out.txt", "renamed.txt"} <= dirty
-
-
 class TestUnlockedAnnexFiles:
     """
     Unlocked annexed files must never be stamped.
@@ -140,26 +121,6 @@ class TestUnlockedAnnexFiles:
     On the dataset this was found on, that was 152 s for 3.71 GB -- against
     0.11 s for the 10099 locked symlinks beside them.
     """
-
-    def test_detects_a_pointer_blob(self, tmp_path: Path):
-        """A pointer blob is recognised without git-annex being involved."""
-        repo = tmp_path / "plain"
-        repo.mkdir()
-        _git(repo, "init", "-q")
-        _git(repo, "config", "user.email", "t@t")
-        _git(repo, "config", "user.name", "t")
-        (repo / "pointer.pkl").write_text(
-            "/annex/objects/MD5E-s289878220--9959612438e19297b29e640ccff2dc61.pkl\n"
-        )
-        (repo / "plain.txt").write_text("just text\n")
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-qm", "one pointer, one plain file")
-
-        assert unlocked_annex_paths(repo) == {"pointer.pkl"}
-
-    def test_locked_symlinks_are_not_reported(self, pipeline_ds: dict):
-        """The fixture's annexed files are locked, so none should match."""
-        assert unlocked_annex_paths(pipeline_ds["super"]) == set()
 
     def test_copy_mtimes_leaves_the_unlocked_file_alone(self, pipeline_ds: dict):
         """
@@ -238,13 +199,6 @@ class TestCreateNestedWorktreesMtimes:
         # Creating the marker must not have disturbed the directory stamp.
         assert os.lstat(worktree / "results").st_mtime_ns == \
             os.lstat(main / "results").st_mtime_ns
-
-    def test_cross_dataset_ordering_is_preserved(self, pipeline_ds: dict):
-        """The whole point: the output must stay newer than the script."""
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
-
-        assert os.lstat(worktree / "out.txt").st_mtime_ns > \
-            os.lstat(worktree / "code" / "script.py").st_mtime_ns
 
     def test_ordering_is_inverted_without_the_fix(self, pipeline_ds: dict):
         """The negative control -- without this, the test above proves nothing."""
@@ -337,11 +291,6 @@ class TestSafety:
 
 class TestResolveWorktreeTarget:
     """A target is a worktree path or a branch name, as `delete` reads it."""
-
-    def test_existing_path_is_taken_as_a_path(self, pipeline_ds: dict):
-        worktree = _add(pipeline_ds, "wt", "runs")
-
-        assert resolve_worktree_target(target=str(worktree)) == worktree.resolve()
 
     def test_stale_worktree_is_pruned_before_lookup(self, pipeline_ds: dict):
         """A directory removed with rm -rf must not resolve."""

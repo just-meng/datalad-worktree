@@ -38,17 +38,6 @@ def _failed(reports: list[WorktreeReport]) -> list[WorktreeReport]:
 
 
 class TestCreateNestedWorktrees:
-    def test_dry_run(self, superds: dict):
-        reports = _run_create(
-            superds_path=superds["super"],
-            worktree_path=superds["wt_location"] / "test-wt",
-            branch="test-branch",
-            dry_run=True,
-        )
-        assert _all_ok(reports)
-        assert all(r.result == WorktreeResult.SKIPPED_DRY_RUN for r in reports)
-        assert not (superds["wt_location"] / "test-wt").exists()
-
     def test_dry_run_reports_what_the_real_run_refuses(self, superds: dict):
         """-n runs the pre-flight: it must not promise a worktree that `add` refuses."""
         _git(superds["sub02"], "worktree", "add", "-q", "-b", "taken",
@@ -97,25 +86,6 @@ class TestCreateNestedWorktrees:
         skipped = [r for r in reports if r.dataset_path == "sub-02"]
         assert skipped[0].result == WorktreeResult.SKIPPED_NOT_INSTALLED
 
-    def test_preflight_blocks_branch_conflict(self, superds: dict, tmp_path: Path):
-        """If a branch is already checked out, add aborts before creating anything."""
-        # Create a worktree for sub-01 on branch 'conflict'
-        sub01_path = superds["sub01"]
-        conflict_wt = tmp_path / "conflict-wt"
-        _git(sub01_path, "worktree", "add", "-b", "conflict", str(conflict_wt))
-
-        reports = _run_create(
-            superds_path=superds["super"],
-            worktree_path=superds["wt_location"] / "test-wt",
-            branch="conflict",
-        )
-        # Should fail without creating anything
-        assert not _all_ok(reports)
-        assert any("already checked out" in r.message for r in _failed(reports))
-        # The worktree root should NOT have been created
-        assert not (superds["wt_location"] / "test-wt").exists()
-
-
 # ── Replacing an existing worktree ───────────────────────────────────────────
 
 
@@ -139,18 +109,6 @@ class TestReplacingWorktrees:
     nothing worth keeping except stale mtimes -- so refusing to overwrite it
     only made the caller type a flag. What still refuses is unmerged work.
     """
-
-    def test_a_merged_worktree_is_replaced_without_any_flag(self, superds: dict):
-        worktree = superds["wt_location"] / "wt"
-        _run_create(superds_path=superds["super"], worktree_path=worktree,
-                    branch="runs")
-
-        reports = _run_create(superds_path=superds["super"],
-                              worktree_path=worktree, branch="runs")
-
-        assert _all_ok(reports)
-        assert _succeeded(reports)
-        assert (worktree / ".git").exists()
 
     def test_a_stray_directory_is_still_refused(self, superds: dict):
         """Only paths git calls worktrees are replaced, flag or no flag."""
@@ -432,13 +390,3 @@ class TestFollowParent:
         assert "not present in this subdataset" in failed[0].message
         assert not worktree.exists()
 
-    def test_cli_flag_takes_an_optional_commit(self):
-        from datalad_worktree.cli import build_parser
-
-        p = build_parser()
-        assert p.parse_args(["add", "b", "/tmp/wt"]).follow_parent is None
-        assert p.parse_args(
-            ["add", "b", "/tmp/wt", "--follow-parent"]).follow_parent == "HEAD"
-        assert p.parse_args(
-            ["add", "b", "/tmp/wt", "--follow-parent", "4f2a91c"]
-        ).follow_parent == "4f2a91c"

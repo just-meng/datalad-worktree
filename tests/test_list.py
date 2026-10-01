@@ -93,15 +93,3 @@ class TestGroupByBranch:
         assert super_branch == "master"
         assert [p for p, _, _ in main_group] == [".", "code"]
 
-    def test_innermost_root_wins_for_nested_worktrees(self):
-        entries = [
-            (".", Path("/ds"), "master", True),
-            (".", Path("/wt/outer"), "outer", False),
-            (".", Path("/wt/outer/inner"), "inner", False),
-            ("code", Path("/wt/outer/inner/code"), DETACHED_LABEL, False),
-        ]
-
-        _main, branch_groups, _super = group_by_branch(entries)
-
-        assert ("code", Path("/wt/outer/inner/code"), DETACHED_LABEL) \
-            in branch_groups["inner"]

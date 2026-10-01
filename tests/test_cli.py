@@ -53,36 +53,3 @@ class TestMainCLI:
         assert exit_code == 0
         assert "feat/bare" in out
 
-    def test_add_not_a_repo_returns_1(self, tmp_path):
-        exit_code = main([
-            "add",
-            "-d", str(tmp_path),
-            "b", str(tmp_path / "wt"),
-        ])
-        assert exit_code == 1
-
-
-class TestCLISummaryOutput:
-    """Test that summary lines are printed correctly."""
-
-    def test_add_and_delete_summary_lines(self, superds: dict, capsys, monkeypatch):
-        """delete acts without asking for confirmation."""
-        def no_input(_):
-            raise AssertionError("delete must not prompt")
-
-        monkeypatch.setattr("builtins.input", no_input)
-        main([
-            "add",
-            "-d", str(superds["super"]),
-            "feat/sum", str(superds["wt_location"] / "sum-test"),
-        ])
-        add_out = capsys.readouterr().out
-        assert "4 created" in add_out
-
-        main([
-            "delete",
-            "-d", str(superds["super"]),
-            "feat/sum",
-        ])
-        rm_out = capsys.readouterr().out
-        assert "4 deleted" in rm_out

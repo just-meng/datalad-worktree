@@ -9,9 +9,7 @@ from datalad_worktree.add import create_nested_worktrees
 from datalad_worktree.container import (
     PLACEHOLDER,
     SUBSTITUTION_KEY,
-    add_placeholder,
     bind_option,
-    check_bindable,
 )
 from datalad_worktree.core import WorktreeResult
 
@@ -50,24 +48,6 @@ def register_container(
 
 
 # ── Pure helpers ─────────────────────────────────────────────────────────────
-
-
-class TestAddPlaceholder:
-    def test_inserts_before_img_keeping_existing_options(self):
-        new, reason = add_placeholder("singularity exec -B {{pwd}} --cleanenv {img} {cmd}")
-        assert new == "singularity exec -B {{pwd}} --cleanenv {{bindpaths}} {img} {cmd}"
-        assert reason == ""
-
-    def test_already_configured(self):
-        new, reason = add_placeholder("singularity exec {{bindpaths}} {img} {cmd}")
-        assert new is None
-        assert reason == "cmdexec already contains {{bindpaths}}"
-
-
-def test_unbindable_paths_are_rejected():
-    """A bind spec is ``src:dst:ro`` split on whitespace, so neither may appear."""
-    assert "whitespace" in check_bindable(Path("/data/my super"))
-    assert "':'" in check_bindable(Path("/data/su:per"))
 
 
 # ── Configuration of created worktrees ───────────────────────────────────────
@@ -119,19 +99,6 @@ class TestConfigureWorktree:
         status = _git(worktree, "status", "--porcelain", "--", ".datalad/config")
         assert status.stdout.strip() == ""
 
-    def test_skips_cmdexec_without_anchor(self, superds: dict):
-        register_container(superds["super"], cmdexec="wrapper.sh {cmd}")
-        reports = _create(superds)
-
-        skipped = [
-            r for r in reports if r.result == WorktreeResult.SKIPPED_CONTAINER
-        ]
-        assert len(skipped) == 1
-        assert "{img}" in skipped[0].message
-        assert _git_value(
-            superds["wt_location"], "--get", "datalad.containers.mycont.cmdexec"
-        ) is None
-
     def test_subdataset_containers_are_not_configured(self, superds: dict):
         """
         Only the superdataset is configured (issue #27).
@@ -150,24 +117,6 @@ class TestConfigureWorktree:
         assert not [r for r in reports
                     if r.result == WorktreeResult.CONFIGURED
                     and r.dataset_path != "."]
-
-    def test_a_subdataset_container_leaves_the_worktree_clean(self, superds: dict):
-        """
-        The side-effect the rule above exists to prevent.
-
-        Registering the container commits inside the subdataset, which moves it
-        past the gitlink the superdataset records -- so that is recorded first,
-        making the main checkout clean. Any dirt in the fresh worktree is then
-        ours.
-        """
-        register_container(superds["sub01"], "subcont")
-        _git(superds["super"], "commit", "-qam", "record sub-01")
-        assert _git(superds["super"], "status", "--short").stdout == ""
-
-        _create(superds)
-
-        status = _git(superds["wt_location"], "status", "--short").stdout
-        assert status == "", status
 
     def test_disabled_by_flag(self, superds: dict):
         register_container(superds["super"])

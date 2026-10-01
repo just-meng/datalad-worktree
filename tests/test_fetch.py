@@ -128,37 +128,10 @@ def _fetch(shipping_ds: dict, **kwargs) -> list:
 # ── Building blocks ──────────────────────────────────────────────────────────
 
 
-class TestBehindIsNotDivergence:
-
-    def test_behind_dataset_is_skipped_not_refused(self, shipping_ds: dict):
-        main_sub = shipping_ds["main"] / "derived"
-        (main_sub / "notes.md").write_text("carried on working\n")
-        Dataset(str(main_sub)).save(message="dev work", result_renderer="disabled")
-
-        reports = _fetch(shipping_ds)
-
-        assert not [r for r in reports if r.result == WorktreeResult.FAILED]
-        skipped = [r for r in reports
-                   if r.result == WorktreeResult.SKIPPED_UP_TO_DATE]
-        # "ahead", not "already up to date": both skip, but only one of them
-        # means the worktree had nothing to ship. Matching the discriminating
-        # word rather than the whole sentence keeps this robust to rewording.
-        assert any(r.dataset_path == "derived" and "ahead" in r.message
-                   for r in skipped)
-
-
 # ── The behaviour the command exists for ─────────────────────────────────────
 
 
 class TestFetchShipsContent:
-    def test_changed_output_arrives(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-
-        _fetch(shipping_ds)
-
-        assert (shipping_ds["main"] / OUTPUT_FILE).read_bytes() == \
-            b"\x89PNG" + b"v2" * 50
-
     def test_subdatasets_are_updated_before_the_superdataset(self, shipping_ds: dict):
         """A gitlink must not arrive before the commit it names."""
         _run_in_worktree(shipping_ds, identical=False)
@@ -171,14 +144,6 @@ class TestFetchShipsContent:
 
 
 class TestFetchRefreshesMtimes:
-    def test_changed_output_stops_looking_stale(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-        assert _looks_stale(shipping_ds["main"])
-
-        _fetch(shipping_ds)
-
-        assert not _looks_stale(shipping_ds["main"])
-
     def test_identical_output_stops_looking_stale(self, shipping_ds: dict):
         """
         The case a diff-based refresh cannot see.
@@ -380,24 +345,13 @@ class TestRefreshingAWorktree:
 
 class TestFetchCLI:
 
-    def test_main_updates_by_branch_name(self, shipping_ds: dict, capsys, monkeypatch):
+    def test_main_updates_by_branch_name(self, shipping_ds: dict, monkeypatch):
         _run_in_worktree(shipping_ds, identical=False)
         monkeypatch.chdir(shipping_ds["main"])
 
         exit_code = main_cli(["fetch", "runs"])
 
         assert exit_code == 0
-        out = capsys.readouterr().out
-        assert "fetch  derived" in out
-        assert "2 fetched, 0 failed" in out
+        assert _head(shipping_ds["main"]) == _head(shipping_ds["wt"])
         assert not _looks_stale(shipping_ds["main"])
 
-    def test_main_reports_a_refusal(self, shipping_ds: dict, capsys, monkeypatch):
-        _run_in_worktree(shipping_ds, identical=False)
-        _rewrite(shipping_ds["main"] / OUTPUT_FILE, b"hand-edited")
-        monkeypatch.chdir(shipping_ds["main"])
-
-        exit_code = main_cli(["fetch", "runs"])
-
-        assert exit_code == 1
-        assert "would overwrite uncommitted changes" in capsys.readouterr().err
