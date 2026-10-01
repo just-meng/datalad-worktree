@@ -319,7 +319,6 @@ def create_nested_worktrees(
     superds_path: Path,
     worktree_path: Path,
     branch: str,
-    replace: bool = True,
     discard_unmerged: bool = False,
     follow_parent: bool = False,
     at_commit: str | None = None,
@@ -336,10 +335,10 @@ def create_nested_worktrees(
     failure the pre-flight could not foresee stops the run, and the worktrees
     created so far are deleted again.
 
-    ``replace`` (on by default, issue #28) replaces a worktree that already
-    exists at the destination, deleting its branch too so the recreate starts
-    from the main checkout's state -- worktrees are meant to be disposable, and
-    keeping one that is merged or behind buys nothing but stale mtimes. It
+    A worktree that already exists at the destination is replaced (issue
+    #28), its branch deleted too so the recreate starts from the main
+    checkout's state -- worktrees are meant to be disposable, and keeping
+    one that is merged or behind buys nothing but stale mtimes. It
     refuses, changing nothing, if the worktree still holds commits the main
     checkout lacks; ``discard_unmerged`` (the CLI's ``-f``) discards those as
     well. Uncommitted changes are always discarded, as ``worktree delete
@@ -419,25 +418,23 @@ def create_nested_worktrees(
     # Only looked up here. It is deleted after every check below has passed,
     # so that a refusal leaves it in place; the checks are told about it
     # through ``replaced_root`` instead.
-    existing: list[tuple[str, Path, Path]] = []
     replaced_root: Path | None = None
-    if replace or discard_unmerged:
-        existing = existing_worktrees(superds_path, worktree_root, subdatasets)
-        if existing:
-            replaced_root = worktree_root
-            if not discard_unmerged:
-                blocked = unmerged_worktrees(existing)
-                if blocked:
-                    for dataset_path, message in blocked:
-                        yield WorktreeReport(
-                            dataset_path=dataset_path,
-                            source=superds_path,
-                            destination=worktree_root / dataset_path,
-                            result=WorktreeResult.FAILED,
-                            branch=branch,
-                            message=message,
-                        )
-                    return
+    existing = existing_worktrees(superds_path, worktree_root, subdatasets)
+    if existing:
+        replaced_root = worktree_root
+        if not discard_unmerged:
+            blocked = unmerged_worktrees(existing)
+            if blocked:
+                for dataset_path, message in blocked:
+                    yield WorktreeReport(
+                        dataset_path=dataset_path,
+                        source=superds_path,
+                        destination=worktree_root / dataset_path,
+                        result=WorktreeResult.FAILED,
+                        branch=branch,
+                        message=message,
+                    )
+                return
 
     # ── --follow-parent pre-flight ───────────────────────────────────────
     # Refuse before creating anything if the commit cannot be resolved, or if a
