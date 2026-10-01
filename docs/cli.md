@@ -94,14 +94,14 @@ cd /tmp/worktrees/runs
 worktree fetch             # new code and inputs in
 ```
 
-- **No `target` from a main checkout is an error.** There is no "checkout it came from", so name one.
-- **How commits come in:**
+- No `target` from a main checkout is an error.
+- How commits come in:
   - Where your side has no commits of its own, the fetch fast-forwards.
   - Where both sides have commits, it merges (git >= 2.38; older git refuses).
   - Where the merge would conflict, it refuses and names the paths. The usual case is both sides having moved the same subdataset.
-- **Uncommitted changes block it only where the fetch would overwrite them,** and those paths are named.
-- **A dataset the worktree never changed is skipped.** Your side is ahead there, so there is nothing to bring in.
-- **A detached HEAD in any of the worktree's datasets refuses the whole fetch.**
+- Uncommitted changes block it only where the fetch would overwrite them, and those paths are named.
+- A dataset the worktree never changed is skipped.
+- A detached HEAD in any of the worktree's datasets refuses the whole fetch.
 
 ## `worktree delete`
 
@@ -120,14 +120,10 @@ worktree delete <target> [options]
 
 Deletes the worktree in every dataset, deepest first. It does not ask for confirmation, so use `-n` to preview.
 
-- **The branch is deleted too,** unless `--keep-branch`.
-- **All-or-nothing.** Before deleting anything, `delete` checks every worktree. Unless `-f`, it refuses and deletes nothing if any worktree has:
-  - uncommitted or untracked changes;
-  - commits the main checkout lacks. With `--keep-branch` these are kept on the branch, so only a worktree with a detached HEAD is refused for them.
-- **`-n` runs the same checks and stops,** so it never promises a deletion the real run refuses.
-- **The main working tree is never deleted.**
-  - Named by path, it is reported as "the main working tree, not a worktree".
-  - Named by branch, it is passed over: "no worktree on branch".
+- The branch is deleted too, unless `--keep-branch`.
+- Before deleting anything, `delete` checks every worktree. Unless `-f`, it refuses and deletes nothing if any worktree has uncommitted or untracked changes, or commits the main checkout lacks. With `--keep-branch` the commits are kept on the branch, so only a worktree with a detached HEAD is refused for them.
+- `-n` runs the same checks and stops, so it never promises a deletion the real run refuses.
+- The main working tree is never deleted.
 
 ## `worktree list`
 
