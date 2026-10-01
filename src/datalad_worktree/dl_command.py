@@ -467,15 +467,15 @@ try:
             ),
             keep_branch=Parameter(
                 args=("--keep-branch",),
-                doc="Keep the branch. By default it is deleted too (safe "
-                    "delete; refuses if unmerged unless --force)",
+                doc="Keep the branch, and with it any commits the main "
+                    "checkout lacks. By default it is deleted too",
                 action="store_true",
                 default=False,
             ),
             force=Parameter(
                 args=("-f", "--force"),
-                doc="Force deletion even with uncommitted changes; "
-                    "force-delete branch",
+                doc="Delete despite uncommitted changes or commits the main "
+                    "checkout lacks, discarding them",
                 action="store_true",
                 default=False,
             ),

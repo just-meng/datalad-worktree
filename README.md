@@ -38,7 +38,7 @@ worktree delete runs                    # dispose of it — or overwrite with `w
 
 Each is on branch `runs`, starting from that dataset's current state, even if `runs` already exists.
 
-`fetch` brings the worktree's commits back into each dataset's main checkout, then copies their mtimes across. `delete` removes the worktree from every dataset along with its branch, refuses when the worktree contains unmerged commits.
+`fetch` brings the worktree's commits back into each dataset's main checkout, then copies their mtimes across. `delete` removes the worktree from every dataset along with its branch, and refuses when the worktree contains unfetched commits.
 
 ## Highlights
 
@@ -46,7 +46,7 @@ Each is on branch `runs`, starting from that dataset's current state, even if `r
 - **`datalad containers-run` works inside the worktree**, via bind-mount configuration written per worktree, so the machine-specific paths stay out of the main checkout and out of history. One empty placeholder is committed on the worktree branch, which is what keeps a run record made there rerunnable elsewhere.
 - **Reproduce any recorded state.** `worktree add [branch] [path] --follow-parent <commit-or-tag>` checks every dataset out exactly as that superdataset commit recorded it, including which subdatasets existed then — to rerun a `datalad run` record from a clean slate, say. Without a commit, subdatasets follow what the superdataset records now.
 - **Results ship home without a clean tree.** Where your side has no commits of its own, `fetch` fast-forwards: nothing is rewritten, so unrelated work in progress is left alone. Where both sides have moved, it merges. It also runs the other way: from inside a worktree, `worktree fetch` brings new code and inputs in.
-- **Safe by default.** Creation and deletion are all-or-nothing: if any dataset would fail, none is touched. Deletion never touches the main working tree or a directory git does not call a worktree; it refuses a worktree with uncommitted changes and keeps a branch with unmerged commits, unless forced. Every command that changes something takes `--dry-run`.
+- **Safe by default.** Creation and deletion are all-or-nothing: if any dataset would fail, none is touched. Deletion never touches the main working tree or a directory git does not call a worktree; it refuses a worktree with uncommitted changes or unfetched commits, unless forced. Every command that changes something takes `--dry-run`.
 - **No dependencies.** Python standard library plus `git`. DataLad itself is optional — it only adds the `datalad worktree-*` commands.
 
 ## Installation

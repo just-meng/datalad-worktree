@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from datalad_worktree.add import unmerged_worktrees
 from datalad_worktree.core import (
     WorktreeReport,
     WorktreeResult,
@@ -207,42 +208,25 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
 
 
 def _predict(
-    targets: list[DeleteTarget], delete_branch: bool, force: bool,
+    targets: list[DeleteTarget], delete_branch: bool,
 ) -> Iterator[WorktreeReport]:
     """
     What deleting ``targets`` would do, without doing it.
 
-    Runs after the pre-flight, so every worktree here would be deleted. What
-    is left to predict is the branch: one ``git branch -d`` would call
-    unmerged -- approximated as not an ancestor of the checkout's HEAD -- is
-    refused without ``force``.
+    Runs after the pre-flight, which is where every refusal comes from, so
+    everything here would be deleted.
     """
     for t in targets:
-        def report(result: WorktreeResult, message: str) -> WorktreeReport:
+        def report(message: str) -> WorktreeReport:
             return WorktreeReport(
                 dataset_path=t.dataset_path, source=t.repo_path,
-                destination=t.worktree_path, result=result,
+                destination=t.worktree_path, result=WorktreeResult.SKIPPED_DRY_RUN,
                 branch=t.branch, message=message,
             )
 
-        yield report(WorktreeResult.SKIPPED_DRY_RUN, "would delete")
-
-        if not (delete_branch and t.branch):
-            continue
-        merged = subprocess.run(
-            ["git", "-C", str(t.repo_path), "merge-base", "--is-ancestor",
-             t.branch, "HEAD"],
-            capture_output=True, text=True,
-        ).returncode == 0
-        if merged or force:
-            yield report(WorktreeResult.SKIPPED_DRY_RUN,
-                         f"would delete branch '{t.branch}'")
-        else:
-            yield report(
-                WorktreeResult.FAILED,
-                f"branch '{t.branch}' is not fully merged and would be kept; "
-                f"--force deletes it",
-            )
+        yield report("would delete")
+        if delete_branch and t.branch:
+            yield report(f"would delete branch '{t.branch}'")
 
 
 def _git_branch_delete(repo_path: Path, branch: str, force: bool = False) -> str:
@@ -399,22 +383,35 @@ def delete_nested_worktrees(
     yield from skipped
 
     # ── Pre-flight: all-or-nothing, like add ─────────────────────────────
-    # A dirty worktree is refused, and so is every dataset above it, so
-    # deleting the rest would leave a half-deleted hierarchy behind.
+    # Refuses on work that hasn't come home: uncommitted changes, and commits
+    # the main checkout lacks. A dirty worktree also makes every dataset above
+    # it dirty, so deleting the rest would leave a half-deleted hierarchy.
     if not force:
-        dirty = [t for t in targets if _has_local_changes(Path(t.worktree_path))]
-        if dirty:
-            for t in dirty:
+        by_path = {t.dataset_path: t for t in targets}
+        refused = [
+            (t.dataset_path, _dirty_message(t.worktree_path)) for t in targets
+            if _has_local_changes(Path(t.worktree_path))
+        ]
+        # A kept branch keeps its commits, so only a worktree whose commits
+        # go with it is checked: its branch is deleted, or it has none.
+        losing = [
+            (t.dataset_path, t.repo_path, Path(t.worktree_path)) for t in targets
+            if delete_branch or not t.branch
+        ]
+        refused += unmerged_worktrees(losing)
+        if refused:
+            for dataset_path, message in refused:
+                t = by_path[dataset_path]
                 yield WorktreeReport(
                     dataset_path=t.dataset_path, source=t.repo_path,
                     destination=t.worktree_path, result=WorktreeResult.FAILED,
-                    branch=t.branch, message=_dirty_message(t.worktree_path),
+                    branch=t.branch, message=message,
                 )
             return
 
     # -n stops here, so it refuses exactly what the real run refuses.
     if dry_run:
-        yield from _predict(targets, delete_branch, force)
+        yield from _predict(targets, delete_branch)
         return
 
     # Delete each target

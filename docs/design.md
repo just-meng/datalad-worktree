@@ -10,7 +10,7 @@ A worktree exists for one run: create it, run the pipeline, fetch the results ho
 - **Creating is re-creating.** `add` replaces an existing worktree by default and starts every branch at HEAD, so an old run never comes back by accident. Going back to one is explicit: `--follow-parent <branch>`.
 - **Deleting is routine.** There is no prompt, and the branch goes too.
 - **The only thing to protect is work that hasn't come home yet.** Every refusal guards exactly that:
-  - commits the main checkout lacks, when replacing a worktree, resetting a branch, or deleting a branch;
+  - commits the main checkout lacks, when replacing a worktree, resetting a branch, or deleting a worktree with its branch;
   - uncommitted changes, when deleting a worktree.
 
   `-f` means "I know, throw it away".
@@ -76,9 +76,11 @@ A worktree exists for one run: create it, run the pipeline, fetch the results ho
   - Mainness is asked of git per path (`--git-dir` equals `--git-common-dir`). Inferring it from the resolved dataset made the real main checkout look linked when run from inside a worktree.
   - A `.git`-is-a-directory test is wrong both ways and fails four tests.
 - **The `rmtree` fallback never overrules git's refusal of a dirty worktree.** `git worktree remove` fails on every DataLad worktree, whose `.git` is not a gitlink file, so the fallback ran every time. It deleted uncommitted and untracked work without `-f`. It now runs only on a clean worktree. A subdataset directory the command itself just deleted does not count as a change.
-- **All-or-nothing on dirty worktrees, like `add`.** A dirty worktree is refused, and so is every dataset above it, since deleting a parent deletes the child. Deleting the clean rest would leave a half-deleted hierarchy. The unmerged-branch refusal stays per branch: the worktree goes, the branch and its commits stay.
+- **All-or-nothing, like `add`.** Unfetched commits and uncommitted changes are both refused before anything is deleted. A dirty worktree also makes every dataset above it dirty, since deleting a parent deletes the child, and deleting the clean rest would leave a half-deleted hierarchy.
+  - Unfetched commits used to be refused per branch, after the fact: the worktree went, and `git branch -d` then kept the branch. That deleted part of the hierarchy around a refusal, which is what all-or-nothing rules out. Commits and uncommitted changes are now refused in the same pre-flight, using the same test as `add`'s replacement.
+  - `--keep-branch` keeps the commits on the branch, so only a detached worktree is refused for them.
   - `-n` runs this same check before predicting. It used to have its own copy that refused per worktree, so with one dirty subdataset it promised to delete the clean ones, and the real run then deleted nothing.
-- **The branch goes by default.** A kept branch is one the next `add` has to reset. `git branch -d` still refuses an unmerged one.
+- **The branch goes by default.** A kept branch is one the next `add` has to reset.
 - **No confirmation prompt.** The refusals protect work that hasn't come home yet, so a prompt only added friction. It also blocked non-interactive callers such as scripts and agents. `-n` previews.
 
 ## `list`

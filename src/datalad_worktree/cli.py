@@ -209,12 +209,13 @@ def build_parser():
     )
     del_p.add_argument(
         "--keep-branch", action="store_true", default=False,
-        help="keep the branch (default: delete it; refuses if unmerged "
-             "unless -f)",
+        help="keep the branch, and with it any commits the main checkout "
+             "lacks (default: delete it)",
     )
     del_p.add_argument(
         "-f", "--force", action="store_true", default=False,
-        help="force deletion even with uncommitted changes; force-delete branch",
+        help="delete despite uncommitted changes or commits the main "
+             "checkout lacks, discarding them",
     )
     del_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
