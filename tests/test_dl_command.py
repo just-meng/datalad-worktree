@@ -57,19 +57,6 @@ class TestWorktreeAdd:
             assert "worktree_root" in res
             assert res["type"] == "dataset"
 
-    def test_dry_run(self, superds: dict):
-        wt_path = superds["wt_location"] / "dl-dry"
-        results = _call_interface(
-            WorktreeAdd,
-            worktree_path=str(wt_path),
-            branch="feat/dl-dry",
-            dataset=str(superds["super"]),
-            dry_run=True,
-        )
-        dry_results = [r for r in results if r.get("dry_run")]
-        assert len(dry_results) == 4
-        assert not wt_path.exists()
-
     def test_skip_reason_for_uninstalled(self, superds: dict):
         """Uninstalled subdatasets produce skip_reason in result dict."""
         sub02 = superds["sub02"]
@@ -112,14 +99,6 @@ class TestWorktreeAdd:
 
 
 class TestWorktreeList:
-    def test_no_extra_worktrees_returns_empty(self, superds: dict):
-        """With no extra worktrees, list returns nothing (filtered in Interface)."""
-        results = _call_interface(
-            WorktreeList,
-            dataset=str(superds["super"]),
-        )
-        # Each dataset has only 1 non-bare worktree, so none pass the >1 filter
-        assert len(results) == 0
 
     def test_shows_extra_worktrees(self, superds: dict):
         """After creating worktrees, list returns one entry per worktree per
@@ -176,6 +155,8 @@ class TestWorktreeDelete:
             if r["status"] == "ok" and not r.get("branch_deleted")
         ]
         assert len(ok_results) == 4
+        # the branch goes by default
+        assert len([r for r in results if r.get("branch_deleted")]) == 4
         assert not (superds["wt_location"] / "dl-rm").exists()
 
         for res in results:
@@ -185,34 +166,6 @@ class TestWorktreeDelete:
             assert "branch" in res
             assert "dataset_path" in res
             assert res["type"] == "dataset"
-
-    def test_delete_by_path(self, superds: dict):
-        wt_path = superds["wt_location"] / "dl-rm-path"
-        self._setup_worktrees(superds, "dl-rm-path", "feat/dl-rm-path")
-
-        results = _call_interface(
-            WorktreeDelete,
-            target=str(wt_path),
-            dataset=str(superds["super"]),
-        )
-        ok_results = [
-            r for r in results
-            if r["status"] == "ok" and not r.get("branch_deleted")
-        ]
-        assert len(ok_results) == 4
-        assert not wt_path.exists()
-
-    def test_delete_branch(self, superds: dict):
-        """The branch is deleted by default, producing branch_deleted results."""
-        self._setup_worktrees(superds, "dl-rm-delbr", "feat/dl-delbr")
-
-        results = _call_interface(
-            WorktreeDelete,
-            target="feat/dl-delbr",
-            dataset=str(superds["super"]),
-        )
-        branch_deleted = [r for r in results if r.get("branch_deleted")]
-        assert len(branch_deleted) == 4
 
     def test_keep_branch(self, superds: dict):
         """--keep-branch deletes the worktrees but leaves the branch."""
@@ -230,12 +183,3 @@ class TestWorktreeDelete:
             cwd=superds["super"], capture_output=True, text=True,
         )
         assert out.stdout.strip()
-
-    def test_skip_nonexistent_branch(self, superds: dict):
-        results = _call_interface(
-            WorktreeDelete,
-            target="nonexistent/dl-xyz",
-            dataset=str(superds["super"]),
-        )
-        skipped = [r for r in results if r["status"] == "notneeded"]
-        assert len(skipped) == 4

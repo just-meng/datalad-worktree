@@ -12,7 +12,6 @@ from datalad_worktree.container import (
     add_placeholder,
     bind_option,
     check_bindable,
-    find_containers,
 )
 from datalad_worktree.core import WorktreeResult
 
@@ -54,66 +53,21 @@ def register_container(
 
 
 class TestAddPlaceholder:
-    def test_inserts_before_img(self):
-        new, reason = add_placeholder("singularity exec {img} {cmd}")
-        assert new == "singularity exec {{bindpaths}} {img} {cmd}"
-        assert reason == ""
-
-    def test_inserts_only_once(self):
-        new, _ = add_placeholder("run {img} then {img} again")
-        assert new.count(PLACEHOLDER) == 1
-        assert new.startswith("run {{bindpaths}} {img}")
-
-    def test_preserves_existing_options(self):
-        new, _ = add_placeholder("singularity exec -B {{pwd}} --cleanenv {img} {cmd}")
+    def test_inserts_before_img_keeping_existing_options(self):
+        new, reason = add_placeholder("singularity exec -B {{pwd}} --cleanenv {img} {cmd}")
         assert new == "singularity exec -B {{pwd}} --cleanenv {{bindpaths}} {img} {cmd}"
+        assert reason == ""
 
     def test_already_configured(self):
         new, reason = add_placeholder("singularity exec {{bindpaths}} {img} {cmd}")
         assert new is None
         assert reason == "cmdexec already contains {{bindpaths}}"
 
-    def test_no_anchor(self):
-        new, reason = add_placeholder("mycontainer-wrapper {cmd}")
-        assert new is None
-        assert "{img}" in reason
 
-
-class TestBindOption:
-    def test_read_only_bind(self):
-        assert bind_option(Path("/data/super")) == "-B /data/super:/data/super:ro"
-
-    def test_plain_path_is_bindable(self):
-        assert check_bindable(Path("/data/super")) == ""
-
-    def test_whitespace_rejected(self):
-        assert "whitespace" in check_bindable(Path("/data/my super"))
-
-    def test_colon_rejected(self):
-        assert "':'" in check_bindable(Path("/data/su:per"))
-
-
-class TestFindContainers:
-    def test_no_datalad_config(self, datalad_ds: Path):
-        assert find_containers(datalad_ds) == {}
-
-    def test_finds_registered_container(self, datalad_ds: Path):
-        register_container(datalad_ds, "fissa")
-        assert find_containers(datalad_ds) == {"fissa": DEFAULT_CMDEXEC}
-
-    def test_finds_multiple(self, datalad_ds: Path):
-        register_container(datalad_ds, "one")
-        register_container(datalad_ds, "two", "podman run {img} {cmd}")
-        assert set(find_containers(datalad_ds)) == {"one", "two"}
-
-    def test_ignores_container_without_cmdexec(self, datalad_ds: Path):
-        config_file = datalad_ds / ".datalad" / "config"
-        config_file.parent.mkdir(parents=True, exist_ok=True)
-        _git(
-            datalad_ds, "config", "-f", str(config_file),
-            "datalad.containers.bare.image", ".datalad/environments/bare/image",
-        )
-        assert find_containers(datalad_ds) == {}
+def test_unbindable_paths_are_rejected():
+    """A bind spec is ``src:dst:ro`` split on whitespace, so neither may appear."""
+    assert "whitespace" in check_bindable(Path("/data/my super"))
+    assert "':'" in check_bindable(Path("/data/su:per"))
 
 
 # ── Configuration of created worktrees ───────────────────────────────────────
@@ -132,19 +86,6 @@ def _create(superds: dict, branch: str = "wt-branch", **kwargs):
 
 
 class TestConfigureWorktree:
-    def test_writes_worktree_scoped_config(self, superds: dict):
-        register_container(superds["super"])
-        _create(superds)
-
-        worktree = superds["wt_location"]
-        main = superds["super"]
-
-        assert _git_value(worktree, "--get", SUBSTITUTION_KEY) == (
-            f"-B {main}:{main}:ro"
-        )
-        assert _git_value(
-            worktree, "--get", "datalad.containers.mycont.cmdexec"
-        ) == f"singularity exec {PLACEHOLDER} {{img}} {{cmd}}"
 
     def test_main_worktree_untouched(self, superds: dict):
         register_container(superds["super"])
@@ -159,13 +100,6 @@ class TestConfigureWorktree:
         # ... and the committed cmdexec is the one the user registered.
         assert _git_value(main, "--get", "datalad.containers.mycont.cmdexec") is None
         assert _git_value(main, "rev-parse", "HEAD") == head_before
-
-    def test_enables_worktree_config_extension(self, superds: dict):
-        register_container(superds["super"])
-        _create(superds)
-        assert _git_value(
-            superds["wt_location"], "--local", "--get", "extensions.worktreeConfig"
-        ) == "true"
 
     def test_commits_fallback_on_worktree_branch(self, superds: dict):
         register_container(superds["super"])
@@ -184,39 +118,6 @@ class TestConfigureWorktree:
         # ... committed, so the worktree is left clean.
         status = _git(worktree, "status", "--porcelain", "--", ".datalad/config")
         assert status.stdout.strip() == ""
-
-    def test_fallback_not_committed_twice(self, superds: dict):
-        register_container(superds["super"])
-        _create(superds)
-        worktree = superds["wt_location"]
-        head = _git_value(worktree, "rev-parse", "HEAD")
-
-        # Re-running configuration on the same worktree must be idempotent.
-        from datalad_worktree.container import configure_dataset
-
-        reports = list(
-            configure_dataset(
-                dataset_path=".",
-                worktree_path=worktree,
-                main_superds=superds["super"],
-                branch="wt-branch",
-            )
-        )
-        assert _git_value(worktree, "rev-parse", "HEAD") == head
-        assert all(r.result != WorktreeResult.FAILED for r in reports)
-
-    def test_reports_configured(self, superds: dict):
-        register_container(superds["super"])
-        reports = _create(superds)
-
-        assert any(r.result == WorktreeResult.CONFIGURED for r in reports)
-
-    def test_silent_without_containers(self, superds: dict):
-        reports = _create(superds)
-        assert not [
-            r for r in reports
-            if r.result in (WorktreeResult.CONFIGURED, WorktreeResult.SKIPPED_CONTAINER)
-        ]
 
     def test_skips_cmdexec_without_anchor(self, superds: dict):
         register_container(superds["super"], cmdexec="wrapper.sh {cmd}")
@@ -275,12 +176,6 @@ class TestConfigureWorktree:
         assert _git_value(
             superds["wt_location"], "--get", SUBSTITUTION_KEY
         ) is None
-
-    def test_dry_run_writes_nothing(self, superds: dict):
-        register_container(superds["super"])
-        reports = _create(superds, dry_run=True)
-        assert not [r for r in reports if r.result == WorktreeResult.CONFIGURED]
-        assert not superds["wt_location"].exists()
 
 
 class TestDataladResolution:

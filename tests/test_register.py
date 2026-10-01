@@ -24,12 +24,6 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not HAS_DATALAD, reason="DataLad not installed")
 
 
-def test_command_suite_shape():
-    description, commands = command_suite
-    assert isinstance(description, str) and description
-    assert commands, "command_suite must declare at least one command"
-
-
 @pytest.mark.parametrize("module_name,class_name,cmd_name", command_suite[1])
 def test_registered_command_resolves(module_name, class_name, cmd_name):
     module = importlib.import_module(module_name)

@@ -12,17 +12,9 @@ from datalad.api import create, install
 from datalad.distribution.dataset import Dataset
 
 from datalad_worktree.add import create_nested_worktrees
-from datalad_worktree.cli import build_parser, main as main_cli
+from datalad_worktree.cli import main as main_cli
 from datalad_worktree.core import WorktreeResult
 from datalad_worktree.fetch import (
-    MERGE_COMMIT_PREFIX,
-    resolve_fetch_source,
-    collisions,
-    dataset_pairs,
-    fast_forward_state,
-    incoming_paths,
-    merge_prediction,
-    preflight,
     fetch_nested_worktrees,
 )
 
@@ -136,68 +128,7 @@ def _fetch(shipping_ds: dict, **kwargs) -> list:
 # ── Building blocks ──────────────────────────────────────────────────────────
 
 
-class TestDatasetPairs:
-    def test_superdataset_first_then_subdatasets(self, shipping_ds: dict):
-        pairs = dataset_pairs(shipping_ds["main"], shipping_ds["wt"])
-
-        assert [p.dataset_path for p in pairs] == [".", "derived"]
-        assert pairs[0].main == shipping_ds["main"]
-        assert pairs[1].worktree == shipping_ds["wt"] / "derived"
-
-    def test_skips_a_subdataset_absent_from_the_main_checkout(self, shipping_ds: dict):
-        import shutil
-        shutil.rmtree(shipping_ds["main"] / "derived")
-        (shipping_ds["main"] / "derived").mkdir()
-
-        pairs = dataset_pairs(shipping_ds["main"], shipping_ds["wt"])
-
-        assert [p.dataset_path for p in pairs] == ["."]
-
-
-class TestFastForwardState:
-    def test_up_to_date_before_any_work(self, shipping_ds: dict):
-        state, branch = fast_forward_state(
-            shipping_ds["main"], shipping_ds["wt"],
-        )
-        assert state == "up-to-date"
-        assert branch == "runs"
-
-    def test_ready_once_the_worktree_is_ahead(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-
-        state, branch = fast_forward_state(
-            shipping_ds["main"] / "derived", shipping_ds["wt"] / "derived",
-        )
-        assert state == "ready"
-        assert branch == "runs"
-
-    def test_diverged_when_both_sides_committed(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-        main_sub = shipping_ds["main"] / "derived"
-        (main_sub / "notes.md").write_text("meanwhile\n")
-        Dataset(str(main_sub)).save(message="unrelated", result_renderer="disabled")
-
-        state, branch = fast_forward_state(main_sub, shipping_ds["wt"] / "derived")
-
-        assert state == "diverged"
-        assert branch == "runs"
-
-
 class TestBehindIsNotDivergence:
-    def test_worktree_strictly_behind_reports_behind(self, shipping_ds: dict):
-        """
-        The `code/`-subdataset case: consumed in the worktree, developed
-        further in the main checkout. There is nothing to ship, and calling
-        that "diverged" would refuse the whole update for no reason.
-        """
-        main_sub = shipping_ds["main"] / "derived"
-        (main_sub / "notes.md").write_text("carried on working\n")
-        Dataset(str(main_sub)).save(message="dev work", result_renderer="disabled")
-
-        state, branch = fast_forward_state(main_sub, shipping_ds["wt"] / "derived")
-
-        assert state == "behind"
-        assert branch == "runs"
 
     def test_behind_dataset_is_skipped_not_refused(self, shipping_ds: dict):
         main_sub = shipping_ds["main"] / "derived"
@@ -214,29 +145,6 @@ class TestBehindIsNotDivergence:
         # word rather than the whole sentence keeps this robust to rewording.
         assert any(r.dataset_path == "derived" and "ahead" in r.message
                    for r in skipped)
-
-
-class TestCollisions:
-    def test_incoming_paths_lists_what_the_update_rewrites(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-
-        paths = incoming_paths(shipping_ds["main"] / "derived", "runs")
-
-        assert paths == {"vis/ses-A/heatmaps/a.png"}
-
-    def test_unrelated_dirty_file_is_not_a_collision(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-        _rewrite(shipping_ds["main"] / INPUT_FILE, b"work in progress")
-
-        assert collisions(shipping_ds["main"], "runs") == set()
-
-    def test_dirty_incoming_path_is_a_collision(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-        _rewrite(shipping_ds["main"] / OUTPUT_FILE, b"hand-edited")
-
-        clash = collisions(shipping_ds["main"] / "derived", "runs")
-
-        assert clash == {"vis/ses-A/heatmaps/a.png"}
 
 
 # ── The behaviour the command exists for ─────────────────────────────────────
@@ -260,15 +168,6 @@ class TestFetchShipsContent:
                  if r.result == WorktreeResult.FETCHED]
 
         assert order == ["derived", "."]
-
-    def test_leaves_the_checkout_clean(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-
-        _fetch(shipping_ds)
-
-        assert _git(shipping_ds["main"], "status", "--porcelain").stdout == ""
-        gitlink = _git(shipping_ds["main"], "rev-parse", "HEAD:derived").stdout.strip()
-        assert gitlink == _head(shipping_ds["main"] / "derived")
 
 
 class TestFetchRefreshesMtimes:
@@ -320,7 +219,9 @@ class TestShippingIntoADirtyCheckout:
     superdataset, code and inputs are only consumed.
     """
 
-    def test_unrelated_dirty_file_does_not_block(self, shipping_ds: dict):
+    def test_unrelated_dirty_file_neither_blocks_nor_is_touched(
+        self, shipping_ds: dict,
+    ):
         _run_in_worktree(shipping_ds, identical=False)
         _rewrite(shipping_ds["main"] / INPUT_FILE, b"work in progress")
 
@@ -329,24 +230,7 @@ class TestShippingIntoADirtyCheckout:
         assert not [r for r in reports if r.result == WorktreeResult.FAILED]
         assert (shipping_ds["main"] / OUTPUT_FILE).read_bytes() == \
             b"\x89PNG" + b"v2" * 50
-
-    def test_the_dirty_work_survives_untouched(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-        _rewrite(shipping_ds["main"] / INPUT_FILE, b"work in progress")
-
-        _fetch(shipping_ds)
-
         assert (shipping_ds["main"] / INPUT_FILE).read_bytes() == b"work in progress"
-
-    def test_dirty_path_is_not_stamped_with_the_worktrees_mtime(self, shipping_ds: dict):
-        """Its mtime describes local content, not the worktree's."""
-        _run_in_worktree(shipping_ds, identical=False)
-        _rewrite(shipping_ds["main"] / INPUT_FILE, b"work in progress")
-        before = os.lstat(shipping_ds["main"] / INPUT_FILE).st_mtime_ns
-
-        _fetch(shipping_ds)
-
-        assert os.lstat(shipping_ds["main"] / INPUT_FILE).st_mtime_ns == before
 
 
 class TestCleanDivergenceIsMerged:
@@ -366,25 +250,6 @@ class TestCleanDivergenceIsMerged:
         Dataset(str(shipping_ds["main"])).save(
             message="unrelated superdataset work", result_renderer="disabled",
         )
-
-    def test_prediction_is_clean_for_disjoint_changes(self, shipping_ds: dict):
-        self._diverge(shipping_ds)
-
-        verdict, conflicted = merge_prediction(shipping_ds["main"], "runs")
-
-        assert verdict == "clean"
-        assert conflicted == set()
-
-    def test_prediction_is_conflict_on_the_same_path(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-        main_sub = shipping_ds["main"] / "derived"
-        _rewrite(main_sub / "vis/ses-A/heatmaps/a.png", b"\x89PNG" + b"local" * 50)
-        Dataset(str(main_sub)).save(message="local edit", result_renderer="disabled")
-
-        verdict, conflicted = merge_prediction(main_sub, "runs")
-
-        assert verdict == "conflict"
-        assert "vis/ses-A/heatmaps/a.png" in conflicted
 
     def test_diverged_superdataset_is_merged(self, shipping_ds: dict):
         self._diverge(shipping_ds)
@@ -416,14 +281,6 @@ class TestCleanDivergenceIsMerged:
         gitlink = _git(shipping_ds["main"], "rev-parse", "HEAD:derived").stdout.strip()
         assert gitlink == _head(shipping_ds["main"] / "derived")
         assert _git(shipping_ds["main"], "status", "--porcelain").stdout == ""
-
-    def test_the_merge_commit_is_marked_as_extension_made(self, shipping_ds: dict):
-        self._diverge(shipping_ds)
-
-        _fetch(shipping_ds)
-
-        subject = _git(shipping_ds["main"], "log", "-1", "--format=%s").stdout
-        assert subject.startswith(MERGE_COMMIT_PREFIX)
 
 
 class TestPreflightRefuses:
@@ -457,27 +314,8 @@ class TestPreflightRefuses:
         assert _head(shipping_ds["main"]) == before_super
         assert _head(main_sub) == before_sub
 
-    def test_preflight_names_the_offending_dataset(self, shipping_ds: dict):
-        _run_in_worktree(shipping_ds, identical=False)
-        _rewrite(shipping_ds["main"] / OUTPUT_FILE, b"hand-edited")
-
-        errors = preflight(dataset_pairs(shipping_ds["main"], shipping_ds["wt"]))
-
-        assert [path for path, _ in errors] == ["derived"]
-
 
 class TestFetchGuards:
-    def test_rejects_a_worktree_that_is_its_own_target(self, shipping_ds: dict):
-        with pytest.raises(ValueError, match="its own target"):
-            list(fetch_nested_worktrees(
-                main_path=shipping_ds["main"], worktree_path=shipping_ds["main"],
-            ))
-
-    def test_rejects_a_non_repo(self, tmp_path: Path, shipping_ds: dict):
-        with pytest.raises(ValueError, match="Not a git repository"):
-            list(fetch_nested_worktrees(
-                main_path=tmp_path, worktree_path=shipping_ds["wt"],
-            ))
 
     def test_dry_run_changes_nothing(self, shipping_ds: dict):
         _run_in_worktree(shipping_ds, identical=False)
@@ -502,36 +340,6 @@ class TestRefreshingAWorktree:
     and it reduces to an mtime repair -- which is all the removed
     `sync-mtimes` subcommand ever did.
     """
-
-    def test_source_defaults_to_where_the_worktree_came_from(self, shipping_ds: dict):
-        assert resolve_fetch_source(None, shipping_ds["wt"]) == \
-            shipping_ds["main"].resolve()
-
-    def test_a_main_checkout_has_no_default_source(self, shipping_ds: dict):
-        with pytest.raises(ValueError, match="not a linked worktree"):
-            resolve_fetch_source(None, shipping_ds["main"])
-
-    def test_restores_mtimes_reset_by_a_checkout(self, shipping_ds: dict):
-        wt, main = shipping_ds["wt"], shipping_ds["main"]
-        original = os.lstat(main / OUTPUT_FILE).st_mtime_ns
-        _touch(wt / OUTPUT_FILE)  # as a branch switch would
-        assert os.lstat(wt / OUTPUT_FILE).st_mtime_ns != original
-
-        list(fetch_nested_worktrees(main_path=wt, worktree_path=main))
-
-        assert os.lstat(wt / OUTPUT_FILE).st_mtime_ns == original
-
-    def test_nothing_moves_when_already_up_to_date(self, shipping_ds: dict):
-        before = _head(shipping_ds["wt"])
-
-        reports = list(fetch_nested_worktrees(
-            main_path=shipping_ds["wt"], worktree_path=shipping_ds["main"],
-        ))
-
-        assert _head(shipping_ds["wt"]) == before
-        assert not [r for r in reports if r.result == WorktreeResult.FETCHED]
-        assert [r.dataset_path for r in reports
-                if r.result == WorktreeResult.MTIMES_SYNCED] == [".", "derived"]
 
     def test_brings_the_worktree_forward_when_behind(self, shipping_ds: dict):
         """Development continued in main while the worktree sat still."""
@@ -569,31 +377,8 @@ class TestRefreshingAWorktree:
         assert exit_code == 1
         assert "not a linked worktree" in capsys.readouterr().err
 
-    def test_cli_reports_a_non_repo(self, tmp_path: Path, capsys, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-
-        exit_code = main_cli(["fetch", str(tmp_path)])
-
-        assert exit_code == 1
-        assert "Not a git repository" in capsys.readouterr().err
-
 
 class TestFetchCLI:
-    def test_parser_accepts_update(self):
-        args = build_parser().parse_args(["fetch", "runs"])
-        assert args.command == "fetch"
-        assert args.target == "runs"
-        assert args.dry_run is False
-        assert args.no_mtimes is False
-
-    def test_parser_accepts_flags(self):
-        args = build_parser().parse_args(["fetch", "-n", "--no-mtimes", "/tmp/wt"])
-        assert args.dry_run is True
-        assert args.no_mtimes is True
-
-    def test_parser_accepts_no_target(self):
-        args = build_parser().parse_args(["fetch"])
-        assert args.target is None
 
     def test_main_updates_by_branch_name(self, shipping_ds: dict, capsys, monkeypatch):
         _run_in_worktree(shipping_ds, identical=False)

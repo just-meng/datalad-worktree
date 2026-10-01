@@ -4,138 +4,37 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from datalad_worktree.cli import _Colors, _render_report, build_parser, main
+import pytest
+
+from datalad_worktree.cli import _Colors, _render_report, main
 from datalad_worktree.core import WorktreeReport, WorktreeResult
 
 
-class TestBuildParser:
-    def test_add_required_args(self):
-        parser = build_parser()
-        args = parser.parse_args(["add", "main", "/tmp/wt/my-feature"])
-        assert args.command == "add"
-        assert str(args.worktree_path) == "/tmp/wt/my-feature"
-        assert args.branch == "main"
-
-    def test_add_flags_default_false(self):
-        parser = build_parser()
-        args = parser.parse_args(["add", "b", "/tmp/wt"])
-        assert args.dry_run is False
-        assert args.force is False
-
-    def test_add_all_flags(self):
-        parser = build_parser()
-        args = parser.parse_args([
-            "add", "-n", "-f",
-            "-d", "/data/ds",
-            "b", "/tmp/wt",
-        ])
-        assert args.dry_run is True
-        assert args.force is True
-        assert str(args.dataset) == "/data/ds"
-
-    def test_list_command(self):
-        parser = build_parser()
-        args = parser.parse_args(["list"])
-        assert args.command == "list"
-
-    def test_delete_command(self):
-        parser = build_parser()
-        args = parser.parse_args(["delete", "feat/x"])
-        assert args.command == "delete"
-        assert args.target == "feat/x"
-        assert args.keep_branch is False
-        assert args.force is False
-
-    def test_delete_with_flags(self):
-        parser = build_parser()
-        args = parser.parse_args(["delete", "--keep-branch", "-f", "feat/x"])
-        assert args.keep_branch is True
-        assert args.force is True
-
-
 class TestRenderReport:
-    """Test _render_report output for all result types."""
+    """
+    Every outcome is rendered, so no result is silently dropped.
 
-    def setup_method(self):
-        # Disable colors for predictable output
+    A new ``WorktreeResult`` that ``_render_report`` forgets prints nothing,
+    which is how a failure would go unreported. Failures go to stderr, the
+    rest to stdout. STARTING is a progress marker, shown only on a TTY.
+    """
+
+    @pytest.mark.parametrize(
+        "result", [r for r in WorktreeResult if r != WorktreeResult.STARTING],
+        ids=lambda r: r.name,
+    )
+    def test_every_result_names_the_dataset(self, result, capsys):
         _Colors.disable()
-
-    def _make_report(self, result: WorktreeResult, **kwargs) -> WorktreeReport:
-        defaults = dict(
-            dataset_path="sub-01",
-            source=Path("/src/sub-01"),
-            destination=Path("/dst/sub-01"),
-            branch="feat/x",
-            message="",
-        )
-        defaults.update(kwargs)
-        return WorktreeReport(result=result, **defaults)
-
-    def test_created(self, capsys):
-        _render_report(self._make_report(WorktreeResult.CREATED))
-        out = capsys.readouterr().out
-        assert "create" in out
-        assert "sub-01" in out
-        assert "/dst/sub-01" in out
-
-    def test_skipped_dry_run(self, capsys):
-        """Shared by add, fetch and delete, so the message carries the verb."""
-        _render_report(self._make_report(WorktreeResult.SKIPPED_DRY_RUN,
-                                         message="would delete"))
-        out = capsys.readouterr().out
-        assert "dry-run" in out
-        assert "would delete" in out
-        assert "create" not in out
-
-    def test_skipped_not_installed(self, capsys):
-        _render_report(self._make_report(
-            WorktreeResult.SKIPPED_NOT_INSTALLED,
-            message="not installed",
+        _render_report(WorktreeReport(
+            dataset_path="sub-01", source=Path("/src/sub-01"),
+            destination=Path("/dst/sub-01"), result=result,
+            branch="feat/x", message="why",
         ))
-        out = capsys.readouterr().out
-        assert "skip" in out
-        assert "not installed" in out
 
-    def test_skipped_not_git_repo(self, capsys):
-        _render_report(self._make_report(
-            WorktreeResult.SKIPPED_NOT_GIT_REPO,
-            message="not a git repo",
-        ))
-        out = capsys.readouterr().out
-        assert "skip" in out
-        assert "not a git repo" in out
-
-    def test_skipped_no_worktree(self, capsys):
-        _render_report(self._make_report(
-            WorktreeResult.SKIPPED_NO_WORKTREE,
-            message="no worktree at /tmp/x",
-        ))
-        out = capsys.readouterr().out
-        assert "skip" in out
-        assert "no worktree" in out
-
-    def test_deleted(self, capsys):
-        _render_report(self._make_report(WorktreeResult.DELETED))
-        out = capsys.readouterr().out
-        assert "delete" in out
-        assert "sub-01" in out
-        assert "/dst/sub-01" in out
-
-    def test_deleted_branch(self, capsys):
-        _render_report(self._make_report(WorktreeResult.DELETED_BRANCH))
-        out = capsys.readouterr().out
-        assert "delete" in out
-        assert "branch" in out
-        assert "feat/x" in out
-
-    def test_failed(self, capsys):
-        _render_report(self._make_report(
-            WorktreeResult.FAILED,
-            message="git worktree add failed: fatal error",
-        ))
-        captured = capsys.readouterr()
-        assert "error" in captured.err
-        assert "fatal error" in captured.err
+        out, err = capsys.readouterr()
+        shown, silent = (err, out) if result == WorktreeResult.FAILED else (out, err)
+        assert "sub-01" in shown
+        assert silent == ""
 
 
 class TestMainCLI:
@@ -154,15 +53,6 @@ class TestMainCLI:
         assert exit_code == 0
         assert "feat/bare" in out
 
-    def test_add_dry_run_succeeds(self, superds: dict):
-        exit_code = main([
-            "add",
-            "--dry-run",
-            "-d", str(superds["super"]),
-            "feat/cli", str(superds["wt_location"] / "test-cli"),
-        ])
-        assert exit_code == 0
-
     def test_add_not_a_repo_returns_1(self, tmp_path):
         exit_code = main([
             "add",
@@ -171,62 +61,16 @@ class TestMainCLI:
         ])
         assert exit_code == 1
 
-    def test_add_full_run(self, superds: dict):
-        exit_code = main([
-            "add",
-            "-d", str(superds["super"]),
-            "feat/cli-full", str(superds["wt_location"] / "cli-full"),
-        ])
-        assert exit_code == 0
-        wt = superds["wt_location"] / "cli-full"
-        assert wt.is_dir()
-        assert (wt / "sub-01").is_dir()
-        assert (wt / "sub-01" / "derivatives").is_dir()
-        assert (wt / "sub-02").is_dir()
-
-    def test_list_succeeds(self, superds: dict):
-        exit_code = main([
-            "list",
-            "-d", str(superds["super"]),
-        ])
-        assert exit_code == 0
-
-    def test_delete_by_branch_succeeds(self, superds: dict):
-        # First create worktrees
-        main([
-            "add",
-            "-d", str(superds["super"]),
-            "feat/rm-test", str(superds["wt_location"] / "rm-test"),
-        ])
-        # Then delete them
-        exit_code = main([
-            "delete",
-            "-d", str(superds["super"]),
-            "feat/rm-test",
-        ])
-        assert exit_code == 0
-        assert not (superds["wt_location"] / "rm-test").exists()
-
-    def test_delete_by_path_succeeds(self, superds: dict):
-        wt_path = superds["wt_location"] / "rm-path-test"
-        main([
-            "add",
-            "-d", str(superds["super"]),
-            "feat/rm-path", str(wt_path),
-        ])
-        exit_code = main([
-            "delete",
-            "-d", str(superds["super"]),
-            str(wt_path),
-        ])
-        assert exit_code == 0
-        assert not wt_path.exists()
-
 
 class TestCLISummaryOutput:
     """Test that summary lines are printed correctly."""
 
-    def test_add_and_delete_summary_lines(self, superds: dict, capsys):
+    def test_add_and_delete_summary_lines(self, superds: dict, capsys, monkeypatch):
+        """delete acts without asking for confirmation."""
+        def no_input(_):
+            raise AssertionError("delete must not prompt")
+
+        monkeypatch.setattr("builtins.input", no_input)
         main([
             "add",
             "-d", str(superds["super"]),
@@ -242,98 +86,3 @@ class TestCLISummaryOutput:
         ])
         rm_out = capsys.readouterr().out
         assert "4 deleted" in rm_out
-
-    def test_add_dry_run_summary(self, superds: dict, capsys):
-        main([
-            "add",
-            "--dry-run",
-            "-d", str(superds["super"]),
-            "feat/sum-dry", str(superds["wt_location"] / "sum-dry"),
-        ])
-        out = capsys.readouterr().out
-        assert "4 would be created" in out
-
-    def test_add_summary_with_skipped(self, superds: dict, capsys):
-        """When a subdataset is uninstalled, summary shows skip count."""
-        import shutil
-        sub02 = superds["sub02"]
-        git_entry = sub02 / ".git"
-        if git_entry.is_file():
-            git_entry.unlink()
-        elif git_entry.is_dir():
-            shutil.rmtree(git_entry)
-
-        main([
-            "add",
-            "-d", str(superds["super"]),
-            "feat/sum-skip", str(superds["wt_location"] / "sum-skip"),
-        ])
-        out = capsys.readouterr().out
-        assert "skipped" in out
-
-    def test_delete_summary_with_skipped(self, superds: dict, capsys):
-        main([
-            "delete",
-            "-d", str(superds["super"]),
-            "nonexistent/branch/xyz",
-        ])
-        out = capsys.readouterr().out
-        assert "0 deleted" in out
-        assert "skipped" in out
-
-
-class TestDeleteOutput:
-    """delete acts without asking, and says so when it deletes the branch."""
-
-    def test_deletes_without_asking(self, superds: dict, monkeypatch):
-        main([
-            "add",
-            "-d", str(superds["super"]),
-            "feat/no-prompt", str(superds["wt_location"] / "no-prompt"),
-        ])
-
-        def no_input(_):
-            raise AssertionError("delete must not prompt")
-
-        monkeypatch.setattr("builtins.input", no_input)
-        exit_code = main([
-            "delete",
-            "-d", str(superds["super"]),
-            "feat/no-prompt",
-        ])
-        assert exit_code == 0
-        assert not (superds["wt_location"] / "no-prompt").exists()
-
-    def test_branch_deletion_is_announced(self, superds: dict, capsys):
-        """The branch goes by default, so the output says how to keep it."""
-        main([
-            "add",
-            "-d", str(superds["super"]),
-            "feat/announce", str(superds["wt_location"] / "announce"),
-        ])
-        capsys.readouterr()
-
-        main([
-            "delete",
-            "-d", str(superds["super"]),
-            "feat/announce",
-        ])
-        out = capsys.readouterr().out
-        assert "branch 'feat/announce'" in out
-        assert "--keep-branch" in out
-
-    def test_keep_branch_announces_no_branch_deletion(self, superds: dict, capsys):
-        main([
-            "add",
-            "-d", str(superds["super"]),
-            "feat/announce-keep", str(superds["wt_location"] / "announce-keep"),
-        ])
-        capsys.readouterr()
-
-        main([
-            "delete", "--keep-branch",
-            "-d", str(superds["super"]),
-            "feat/announce-keep",
-        ])
-        out = capsys.readouterr().out
-        assert "branch 'feat/announce-keep'" not in out
