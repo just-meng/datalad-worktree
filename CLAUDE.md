@@ -6,13 +6,13 @@ Guidance for coding agents working on this repository. This file holds rules and
 |---|---|
 | What the tool is for, install | [README.md](README.md) |
 | What each command and flag does | [docs/cli.md](docs/cli.md) |
-| **Why** it behaves that way, with the evidence | [docs/design.md](docs/design.md) |
+| **Why**, across commands: the premise, containers, mtimes | [docs/design.md](docs/design.md) |
+| **Why** a command or module is shaped the way it is, with the evidence | its module and function docstrings |
 | Setup, test and lint commands, jj hooks | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| What each module does | its module docstring |
 
 ## Before changing behaviour
 
-- **Read the design.md section for the command first.** Much of the code looks simplifiable and isn't: the obvious alternative was usually tried and broke something real, and design.md records what. If your change contradicts a design.md paragraph, raise that with the maintainer instead of quietly working around it.
+- **Read design.md and the docstrings of the code you are changing first.** Much of the code looks simplifiable and isn't: the obvious alternative was usually tried and broke something real, and the docstring next to it records what. If your change contradicts design.md or such a docstring, raise that with the maintainer instead of quietly working around it.
 - **Some guards are pinned by tests that fail when the guard is removed.** Don't weaken these to get a test passing:
   - the `mtimes.py` safety rules and their `tests/test_mtimes.py` guards;
   - `_worktree_kind()` in `delete.py` and its tests;
@@ -36,7 +36,7 @@ Guidance for coding agents working on this repository. This file holds rules and
 
 ## Docs
 
-- **Update docs in the same commit as the change:** behaviour in `docs/cli.md`, rationale in `docs/design.md` (a paragraph with its evidence), and README only when a headline claim changes.
+- **Update docs in the same commit as the change:** behaviour in `docs/cli.md`, rationale with its evidence in the docstring of the code it explains, or in `docs/design.md` when it spans commands, and README only when a headline claim changes.
 - **Never put rationale in this file.** Copies drift, so point to where the explanation lives instead.
 
 ## Commits and PRs
