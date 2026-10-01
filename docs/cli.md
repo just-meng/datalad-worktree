@@ -49,7 +49,7 @@ Before changing anything, `add` checks every dataset. If any check fails, it ref
 - `branch` is checked out in a worktree at another path;
 - with `--follow-parent`, the commit can't be resolved, or a subdataset lacks the commit recorded for it.
 
-Only once every check has passed is an existing worktree deleted and the new ones created. Once creation starts, a failing subdataset doesn't stop the others. A failing superdataset stops everything.
+Only once every check has passed is an existing worktree deleted and the new ones created. If git still fails partway, for a reason no check can foresee (a stale lock, a full disk), `add` stops and deletes the worktrees it created. A replaced worktree stays deleted: it held nothing the main checkout lacks, or `-f` said to discard it.
 
 ### Dry run
 

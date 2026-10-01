@@ -381,6 +381,27 @@ class TestReplacingWorktrees:
         assert any("already checked out" in r.message for r in _failed(reports))
         assert _branch_of(worktree) == "runs"
 
+    def test_a_failure_after_the_checks_rolls_back(self, superds: dict):
+        """
+        No pre-flight can foresee every git failure. One that slips through
+        stops the run and removes what it created: no half hierarchy.
+        """
+        # A stale ref lock: a real git failure the pre-flight does not check.
+        git_dir = Path(_git(superds["sub02"], "rev-parse", "--absolute-git-dir")
+                       .stdout.strip())
+        (git_dir / "refs" / "heads" / "runs.lock").write_text("")
+        worktree = superds["wt_location"] / "wt"
+
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="runs")
+
+        assert [r.dataset_path for r in _failed(reports)] == ["sub-02"]
+        assert not worktree.exists()
+        for repo in (superds["super"], superds["sub01"], superds["sub01_deriv"]):
+            listed = _git(repo, "worktree", "list", "--porcelain").stdout
+            assert str(worktree) not in listed, repo
+            assert not _git(repo, "branch", "--list", "runs").stdout.strip(), repo
+
     def test_force_discards_it(self, superds: dict):
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,

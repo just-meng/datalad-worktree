@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 
 from datalad_worktree.container import configure_dataset
@@ -249,6 +249,30 @@ def unmerged_worktrees(
     return unmerged
 
 
+def _delete_worktree_at(
+    superds_path: Path, worktree_root: Path,
+) -> Generator[WorktreeReport, None, bool]:
+    """
+    Delete every worktree at ``worktree_root``, branches included.
+
+    Used to replace an old worktree and to roll back a failed creation, both
+    only after the pre-flight has cleared it, hence ``force``. Returns whether
+    every deletion succeeded.
+    """
+    from datalad_worktree.delete import delete_nested_worktrees
+
+    ok = True
+    for report in delete_nested_worktrees(
+        superds_path=superds_path,
+        target=str(worktree_root),
+        delete_branch=True,
+        force=True,
+    ):
+        ok = ok and report.result != WorktreeResult.FAILED
+        yield report
+    return ok
+
+
 def _preflight_check(
     superds_path: Path,
     worktree_root: Path,
@@ -320,7 +344,9 @@ def create_nested_worktrees(
 
     Runs a pre-flight check before creating anything. If any non-skipped
     dataset would fail (e.g. branch already checked out elsewhere), no
-    worktrees are created and errors are yielded as FAILED reports.
+    worktrees are created and errors are yielded as FAILED reports. A git
+    failure the pre-flight could not foresee stops the run, and the worktrees
+    created so far are deleted again.
 
     ``replace`` (on by default, issue #28) replaces a worktree that already
     exists at the destination, deleting its branch too so the recreate starts
@@ -523,13 +549,9 @@ def create_nested_worktrees(
                     message=f"would replace the worktree at {destination}",
                 )
         else:
-            from datalad_worktree.delete import delete_nested_worktrees
-            yield from delete_nested_worktrees(
-                superds_path=superds_path,
-                target=str(worktree_root),
-                delete_branch=True,
-                force=True,
-            )
+            deleted_ok = yield from _delete_worktree_at(superds_path, worktree_root)
+            if not deleted_ok:
+                return
             # The delete took the old worktree's branch with it, so which
             # branches are reset rather than new is decided afresh.
             presence = branch_presence(superds_path, branch, subdatasets)
@@ -649,8 +671,13 @@ def create_nested_worktrees(
             message=wt_msg,
         )
 
-        if wt_result != WorktreeResult.FAILED:
-            created_worktrees.append((subds.rel_path, subds.abs_path, dest_subds))
+        if wt_result == WorktreeResult.FAILED:
+            # The pre-flight passed, so git failed for a reason it could not
+            # foresee. Undo this run rather than leave half a hierarchy.
+            yield from _delete_worktree_at(superds_path, worktree_root)
+            return
+
+        created_worktrees.append((subds.rel_path, subds.abs_path, dest_subds))
 
     # ── Configure container bind mounts ──────────────────────────────────
     # Only the superdataset. A container registered in a *subdataset* is not
