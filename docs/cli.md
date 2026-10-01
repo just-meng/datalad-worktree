@@ -37,8 +37,7 @@ worktree add -f runs /tmp/worktrees/runs   # ... even if it holds commits never 
 
 ### Existing branches & worktrees
 
-`branch` always starts at each dataset's HEAD. It is created where it is missing, reported as `(new branch)`, and reset where it exists, reported as `(existing branch reset)`. A worktree already at `<worktree-path>` is deleted, branch included, and created afresh. Uncommitted changes in it are discarded. It refuses if the worktree or the branch holds commits the main checkout lacks, unless `-f/--force`. A directory that git does not know as a worktree is never deleted.
-
+`branch` always starts at each dataset's HEAD. It is created where it is missing, reported as `(new branch)`, and reset where it exists, reported as `(existing branch reset)`. A worktree already at `<worktree-path>` is deleted, branch included, and created afresh. Uncommitted changes in it are discarded. It refuses if the worktree or the branch holds commits the main checkout lacks, unless `-f/--force`. A directory that git does not know as a worktree is never deleted. If `branch` is checked out in a worktree at another path, `add` refuses, even with `-f`: delete that worktree first, or pick another branch name.
 
 ### Pre-flight
 
