@@ -124,54 +124,12 @@ def _find_worktree_by_branch(
     return None, None
 
 
-def _has_local_changes(worktree_path: Path) -> bool:
+def _git_worktree_remove(repo_path: Path, worktree_path: Path) -> str:
     """
-    Whether a worktree holds modified or untracked files.
-
-    The same test ``git worktree remove`` applies before refusing. Ignored
-    files do not count. A worktree git cannot read counts as changed:
-    cleanliness that cannot be shown is not assumed.
-
-    One entry is not a change: a subdataset whose directory is gone. Children
-    are deleted first, so that is the mount point this command just emptied.
-    A child that is still there and dirty shows as modified, and keeps its
-    parent from being deleted over it.
-    """
-    result = subprocess.run(
-        ["git", "-C", str(worktree_path), "status", "--porcelain", "-z"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return True
-    for record in filter(None, result.stdout.split("\0")):
-        status, path = record[:2], record[3:]
-        if status == " D" and not (worktree_path / path).exists() \
-                and _is_gitlink(worktree_path, path):
-            continue
-        return True
-    return False
-
-
-def _dirty_message(worktree_path: Path) -> str:
-    return (f"{worktree_path} has uncommitted or untracked changes; "
-            f"commit them, or use --force to discard them")
-
-
-def _is_gitlink(worktree_path: Path, path: str) -> bool:
-    """Whether ``path`` is a submodule (mode 160000) in the index."""
-    result = subprocess.run(
-        ["git", "-C", str(worktree_path), "ls-files", "-s", "--", path],
-        capture_output=True, text=True,
-    )
-    return result.stdout.startswith("160000 ")
-
-
-def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = False) -> str:
-    """
-    Delete a worktree. Tries `git worktree remove` first; if that fails
-    (e.g. .git is a directory instead of a gitlink file, common in DataLad),
-    falls back to deleting the directory and pruning.
-    Returns error message or empty string.
+    Delete a worktree, uncommitted changes included. Tries `git worktree
+    remove --force` first; if that fails (e.g. .git is a directory instead of
+    a gitlink file, common in DataLad), falls back to deleting the directory
+    and pruning. Returns error message or empty string.
     """
     if is_main_worktree(worktree_path):
         # Never reachable through the normal resolution path, which filters
@@ -179,10 +137,8 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
         # rmtree fallback below safe, so it stays.
         return f"refusing to delete {worktree_path}: it is the main working tree"
 
-    cmd = ["git", "-C", str(repo_path), "worktree", "remove"]
-    if force:
-        cmd.append("--force")
-    cmd.append(str(worktree_path))
+    cmd = ["git", "-C", str(repo_path), "worktree", "remove", "--force",
+           str(worktree_path)]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
@@ -191,11 +147,7 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
     # Fallback: delete directory manually and prune. Reached when `git
     # worktree remove` fails on a DataLad repo whose .git is a directory
     # rather than a gitlink file, or on a worktree containing submodules.
-    # git also fails on a dirty worktree, and rmtree must not overrule that:
-    # it would destroy exactly the work git refused to lose.
     wt = Path(worktree_path)
-    if wt.exists() and not force and _has_local_changes(wt):
-        return _dirty_message(wt)
     if wt.exists():
         try:
             shutil.rmtree(wt)
@@ -369,7 +321,7 @@ def delete_nested_worktrees(
         If True (the default), also delete the branch (using safe
         ``git branch -d``).
     force : bool
-        Pass ``--force`` to ``git worktree remove`` and use ``-D`` for
+        Delete despite commits the main checkout lacks, and use ``-D`` for
         branch deletion.
 
     Yields
@@ -411,7 +363,7 @@ def delete_nested_worktrees(
 
     # Delete each target
     for t in targets:
-        err = _git_worktree_remove(t.repo_path, t.worktree_path, force=True)
+        err = _git_worktree_remove(t.repo_path, t.worktree_path)
         if err:
             yield WorktreeReport(
                 dataset_path=t.dataset_path,

@@ -243,9 +243,8 @@ class TestDeleteFallback:
             # Already a directory (DataLad default) — this is the case we test
             pass
 
-        # _git_worktree_remove should fall back to rmtree + prune. The stub
-        # .git cannot be read, so cleanliness is unknown and needs force.
-        err = _git_worktree_remove(superds["super"], wt_path, force=True)
+        # _git_worktree_remove should fall back to rmtree + prune.
+        err = _git_worktree_remove(superds["super"], wt_path)
         assert err == ""
         assert not wt_path.exists()
 
@@ -361,7 +360,7 @@ class TestMainWorktreeIsNeverDeleted:
 
     def test_remove_helper_refuses_it_directly(self, text2git_ds: Path):
         """Defence in depth: the guard that makes the rmtree fallback safe."""
-        err = _git_worktree_remove(text2git_ds, text2git_ds, force=True)
+        err = _git_worktree_remove(text2git_ds, text2git_ds)
 
         assert "main working tree" in err
         assert (text2git_ds / "precious.txt").exists()
