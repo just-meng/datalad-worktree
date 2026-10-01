@@ -467,8 +467,8 @@ try:
             ),
             force=Parameter(
                 args=("-f", "--force"),
-                doc="Delete despite uncommitted changes or commits the main "
-                    "checkout lacks, discarding them",
+                doc="Delete despite commits the main checkout lacks, "
+                    "discarding them",
                 action="store_true",
                 default=False,
             ),

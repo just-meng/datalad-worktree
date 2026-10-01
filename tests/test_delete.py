@@ -107,55 +107,20 @@ class TestDeleteByBranch:
         )
 
 
-class TestDeleteWithForce:
-    def test_force_deletes_dirty_worktree(self, superds: dict):
-        """--force deletes worktrees even with uncommitted changes."""
-        wt_path = _create_worktrees(superds, "rm-force", "feat/rm-force")
-
-        # Make the worktree dirty (uncommitted changes)
-        (wt_path / "dirty-file.txt").write_text("uncommitted\n")
-        _git(wt_path, "add", "dirty-file.txt")
-
-        # Without force, git worktree remove would refuse
-        # With force, it should succeed
-        reports = list(delete_nested_worktrees(
-            superds_path=superds["super"],
-            target="feat/rm-force",
-            force=True,
-        ))
-        deleted = [r for r in reports if r.result == WorktreeResult.DELETED]
-        assert len(deleted) == 4
-        assert not wt_path.exists()
-
-    def test_dirty_worktree_survives_without_force(self, superds: dict):
-        """git refuses a dirty worktree, and the rmtree fallback must not overrule it."""
+class TestWhatDeleteDiscards:
+    def test_uncommitted_changes_are_discarded(self, superds: dict):
+        """Like add: only unfetched commits refuse, uncommitted work goes."""
         wt_path = _create_worktrees(superds, "rm-dirty", "feat/rm-dirty")
-        (wt_path / "sub-02" / "untracked.txt").write_text("precious\n")
+        (wt_path / "staged.txt").write_text("uncommitted\n")
+        _git(wt_path, "add", "staged.txt")
+        (wt_path / "sub-02" / "untracked.txt").write_text("scratch\n")
 
         reports = list(delete_nested_worktrees(
-            superds_path=superds["super"],
-            target="feat/rm-dirty",
+            superds_path=superds["super"], target="feat/rm-dirty",
         ))
 
-        assert (wt_path / "sub-02" / "untracked.txt").read_text() == "precious\n"
-        refused = [r for r in reports if r.result == WorktreeResult.FAILED]
-        assert "sub-02" in [r.dataset_path for r in refused]
-        assert "uncommitted or untracked" in refused[0].message
-        # The superdataset holds the dirty subdataset, so it survives too.
-        assert "." in [r.dataset_path for r in refused]
-
-    def test_a_dirty_dataset_stops_the_whole_delete(self, superds: dict):
-        """All-or-nothing: clean siblings are not deleted around a refusal."""
-        wt_path = _create_worktrees(superds, "rm-dirty-all", "feat/rm-dirty-all")
-        (wt_path / "sub-02" / "untracked.txt").write_text("precious\n")
-
-        reports = list(delete_nested_worktrees(
-            superds_path=superds["super"], target="feat/rm-dirty-all",
-        ))
-
-        assert not [r for r in reports if r.result == WorktreeResult.DELETED]
-        for clean in ("sub-01", "sub-01/derivatives"):
-            assert (wt_path / clean / ".git").exists(), clean
+        assert not [r for r in reports if r.result == WorktreeResult.FAILED]
+        assert not wt_path.exists()
 
     def test_force_delete_branch_unmerged(self, superds: dict):
         """--force uses -D to delete unmerged branches."""
@@ -507,25 +472,12 @@ class TestDeleteDryRun:
         assert wt_path.exists()
         assert _git(superds["super"], "branch", "--list", "feat/rm-dry").stdout.strip()
 
-    def test_predicts_the_dirty_refusal(self, superds: dict):
-        """Same refusals as the real run: the dirty dataset and its parent."""
-        wt_path = _create_worktrees(superds, "rm-dry-dirty", "feat/rm-dry-dirty")
-        (wt_path / "sub-02" / "untracked.txt").write_text("precious\n")
-
-        def refused(dry_run: bool) -> list[str]:
-            return sorted(r.dataset_path for r in delete_nested_worktrees(
-                superds_path=superds["super"], target="feat/rm-dry-dirty",
-                dry_run=dry_run,
-            ) if r.result == WorktreeResult.FAILED)
-
-        predicted = refused(dry_run=True)
-        assert predicted == [".", "sub-02"]
-        assert refused(dry_run=False) == predicted
-
     def test_promises_only_what_the_real_run_deletes(self, superds: dict):
         """All-or-nothing in -n too: no 'would delete' around a refusal."""
         wt_path = _create_worktrees(superds, "rm-dry-all", "feat/rm-dry-all")
-        (wt_path / "sub-02" / "untracked.txt").write_text("precious\n")
+        (wt_path / "sub-02" / "result.txt").write_text("unfetched\n")
+        _git(wt_path / "sub-02", "add", "result.txt")
+        _git(wt_path / "sub-02", "commit", "-m", "unfetched commit")
 
         predicted = sorted(r.dataset_path for r in delete_nested_worktrees(
             superds_path=superds["super"], target="feat/rm-dry-all",

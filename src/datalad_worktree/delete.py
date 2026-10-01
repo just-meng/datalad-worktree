@@ -383,22 +383,17 @@ def delete_nested_worktrees(
     yield from skipped
 
     # ── Pre-flight: all-or-nothing, like add ─────────────────────────────
-    # Refuses on work that hasn't come home: uncommitted changes, and commits
-    # the main checkout lacks. A dirty worktree also makes every dataset above
-    # it dirty, so deleting the rest would leave a half-deleted hierarchy.
+    # Refuses on commits the main checkout lacks, and on nothing else:
+    # uncommitted changes are discarded, as add discards them when it
+    # replaces a worktree.
     if not force:
         by_path = {t.dataset_path: t for t in targets}
-        refused = [
-            (t.dataset_path, _dirty_message(t.worktree_path)) for t in targets
-            if _has_local_changes(Path(t.worktree_path))
-        ]
         # A kept branch keeps its commits, so only a worktree whose commits
         # go with it is checked: its branch is deleted, or it has none.
-        losing = [
+        refused = unmerged_worktrees([
             (t.dataset_path, t.repo_path, Path(t.worktree_path)) for t in targets
             if delete_branch or not t.branch
-        ]
-        refused += unmerged_worktrees(losing)
+        ])
         if refused:
             for dataset_path, message in refused:
                 t = by_path[dataset_path]
@@ -416,7 +411,7 @@ def delete_nested_worktrees(
 
     # Delete each target
     for t in targets:
-        err = _git_worktree_remove(t.repo_path, t.worktree_path, force=force)
+        err = _git_worktree_remove(t.repo_path, t.worktree_path, force=True)
         if err:
             yield WorktreeReport(
                 dataset_path=t.dataset_path,

@@ -113,15 +113,15 @@ worktree delete <target> [options]
   -n, --dry-run             show what would be deleted, refusals included
   --keep-branch             keep the branch, and with it any commits the
                             main checkout lacks
-  -f, --force               delete despite uncommitted changes or commits
-                            the main checkout lacks, discarding them
+  -f, --force               delete despite commits the main checkout
+                            lacks, discarding them
   -d, --dataset <path>      superdataset root (default: current directory)
 ```
 
 Deletes the worktree in every dataset, deepest first. It does not ask for confirmation, so use `-n` to preview.
 
-- The branch is deleted too, unless `--keep-branch`.
-- Before deleting anything, `delete` checks every worktree. Unless `-f`, it refuses and deletes nothing if any worktree has uncommitted or untracked changes, or commits the main checkout lacks. With `--keep-branch` the commits are kept on the branch, so only a worktree with a detached HEAD is refused for them.
+- The branch is deleted too, unless `--keep-branch`. Uncommitted changes are discarded, as `add` discards them.
+- Before deleting anything, `delete` checks every worktree. Unless `-f`, it refuses and deletes nothing if any worktree has commits the main checkout lacks. With `--keep-branch` these are kept on the branch, so only a worktree with a detached HEAD is refused for them.
 - `-n` runs the same checks and stops, so it never promises a deletion the real run refuses.
 - The main working tree is never deleted.
 

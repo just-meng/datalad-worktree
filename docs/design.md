@@ -9,11 +9,7 @@ A worktree exists for one run: create it, run the pipeline, fetch the results ho
   - A new worktree has to start from the main checkout's state, mtimes included, or it reruns work the main checkout already has.
 - **Creating is re-creating.** `add` replaces an existing worktree by default and starts every branch at HEAD, so an old run never comes back by accident. Going back to one is explicit: `--follow-parent <branch>`.
 - **Deleting is routine.** There is no prompt, and the branch goes too.
-- **The only thing to protect is work that hasn't come home yet.** Every refusal guards exactly that:
-  - commits the main checkout lacks, when replacing a worktree, resetting a branch, or deleting a worktree with its branch;
-  - uncommitted changes, when deleting a worktree.
-
-  `-f` means "I know, throw it away".
+- **The only thing to protect is commits the main checkout lacks.** They are the only work that can still come home, since `fetch` brings commits, so every refusal guards them: when replacing a worktree, resetting a branch, or deleting a worktree with its branch. Uncommitted changes are discarded by `add` and `delete` alike. `-f` means "I know, throw the commits away".
 - **A worktree that lives on goes stale by itself.** Snakemake keeps the *text* of each command in untracked `.snakemake` records. A later edit to a rule then triggers Snakemake's `code` rerun in the old worktree, but not in a fresh one.
 
 ## Containers
@@ -75,11 +71,11 @@ A worktree exists for one run: create it, run the pipeline, fetch the results ho
   - `git worktree list` reports it beside the linked worktrees, so a branch lookup landed on it and the `rmtree` fallback destroyed the dataset. Annexed ones survived only because `rmtree` trips on mode-555 annex directories.
   - Mainness is asked of git per path (`--git-dir` equals `--git-common-dir`). Inferring it from the resolved dataset made the real main checkout look linked when run from inside a worktree.
   - A `.git`-is-a-directory test is wrong both ways and fails four tests.
-- **The `rmtree` fallback never overrules git's refusal of a dirty worktree.** `git worktree remove` fails on every DataLad worktree, whose `.git` is not a gitlink file, so the fallback ran every time. It deleted uncommitted and untracked work without `-f`. It now runs only on a clean worktree. A subdataset directory the command itself just deleted does not count as a change.
-- **All-or-nothing, like `add`.** Unfetched commits and uncommitted changes are both refused before anything is deleted. A dirty worktree also makes every dataset above it dirty, since deleting a parent deletes the child, and deleting the clean rest would leave a half-deleted hierarchy.
-  - Unfetched commits used to be refused per branch, after the fact: the worktree went, and `git branch -d` then kept the branch. That deleted part of the hierarchy around a refusal, which is what all-or-nothing rules out. Commits and uncommitted changes are now refused in the same pre-flight, using the same test as `add`'s replacement.
+- **The `rmtree` fallback runs on every DataLad worktree.** `git worktree remove` fails on them, because their `.git` is not a gitlink file. The fallback is safe only because the main working tree is never a target.
+- **All-or-nothing, like `add`.** Unfetched commits are refused before anything is deleted, with the same test as `add`'s replacement. Uncommitted changes are discarded, as `add` discards them.
+  - Unfetched commits used to be refused per branch, after the fact: the worktree went, and `git branch -d` then kept the branch. That deleted the rest of the hierarchy around a refusal.
   - `--keep-branch` keeps the commits on the branch, so only a detached worktree is refused for them.
-  - `-n` runs this same check before predicting. It used to have its own copy that refused per worktree, so with one dirty subdataset it promised to delete the clean ones, and the real run then deleted nothing.
+  - `-n` runs this same check before predicting. It used to have its own copy, which drifted from the real one and promised deletions the real run refused.
 - **The branch goes by default.** A kept branch is one the next `add` has to reset.
 - **No confirmation prompt.** The refusals protect work that hasn't come home yet, so a prompt only added friction. It also blocked non-interactive callers such as scripts and agents. `-n` previews.
 

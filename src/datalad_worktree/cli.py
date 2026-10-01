@@ -205,8 +205,8 @@ def build_parser():
     )
     del_p.add_argument(
         "-f", "--force", action="store_true", default=False,
-        help="delete despite uncommitted changes or commits the main "
-             "checkout lacks, discarding them",
+        help="delete despite commits the main checkout lacks, discarding "
+             "them",
     )
     del_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
