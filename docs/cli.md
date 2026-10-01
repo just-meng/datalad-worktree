@@ -37,9 +37,9 @@ worktree add -f runs /tmp/worktrees/runs   # ... even if it holds commits never 
 
 ### Existing branches & worktrees
 
-`branch` always starts at each dataset's HEAD. It is created where it is missing, reported as `(new branch)`, and reset where it exists, reported as `(existing branch reset)`. A worktree already at `<worktree-path>` is deleted, branch included, and created afresh. Uncommitted changes in it are discarded. It refuses if the worktree or the branch holds commits the main checkout lacks, unless `-f/--force`. A directory that git does not know as a worktree is never deleted. If `branch` is checked out in a worktree at another path, `add` refuses, even with `-f`: delete that worktree first, or pick another branch name.
+`branch` always starts at each dataset's HEAD. It is created where it is missing, and reset where it exists. A worktree already at `<worktree-path>` is deleted, branch included, and created afresh. Uncommitted changes in it are discarded. 
 
-### Pre-flight
+#### Pre-flight
 
 Before changing anything, `add` checks every dataset. If any check fails, it refuses and touches nothing, not even an existing worktree. It refuses when:
 
@@ -50,25 +50,18 @@ Before changing anything, `add` checks every dataset. If any check fails, it ref
 
 Only once every check has passed is an existing worktree deleted and the new ones created. If git still fails partway, for a reason no check can foresee (a stale lock, a full disk), `add` stops and deletes the worktrees it created. A replaced worktree stays deleted: it held nothing the main checkout lacks, or `-f` said to discard it.
 
-### Dry run
+#### Dry run
 
 `-n` runs the pre-flight and stops, changing nothing. It reports the refusals, or what the real run would do: the worktree it would replace, and for each dataset where its worktree would go and whether `branch` would be new or reset.
 
 ### `--follow-parent`
 
-By default each dataset checks out `branch` on its own, so a subdataset lands on its own branch tip. That may not be the commit the superdataset records for it. `--follow-parent` checks each subdataset out at the commit its parent records instead.
+By default each dataset checks out `branch` on its own, so a subdataset lands on its own branch tip. That may not be the commit the superdataset records for it. `--follow-parent` checks each subdataset out at the commit its parent records instead. All subdatasets and only those recorded by the target commit are created in the worktrees.
 
 ```bash
 worktree add runs /tmp/wt --follow-parent           # as the superdataset records it now
 worktree add rerun /tmp/wt --follow-parent v1.0     # as commit or tag v1.0 recorded it
 ```
-
-With a commit or tag:
-
-- **The superdataset is checked out there too.**
-- **The subdatasets are the ones that commit recorded.** One added later is left out. One recorded then is included even if the current checkout no longer lists it, and it is skipped as not installed if you don't have it.
-- **`branch` is created, or moved, in every dataset** at its recorded commit, so you can work and commit there.
-- **It refuses, creating nothing,** if the commit can't be resolved, or if a subdataset lacks the commit recorded for it (typically: never fetched there).
 
 ### Containers and mtimes
 

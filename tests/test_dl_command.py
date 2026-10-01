@@ -57,8 +57,6 @@ class TestWorktreeAdd:
             assert "worktree_root" in res
             assert res["type"] == "dataset"
 
-        assert all(r.get("new_branch") for r in ok_results)
-
     def test_dry_run(self, superds: dict):
         wt_path = superds["wt_location"] / "dl-dry"
         results = _call_interface(

@@ -38,7 +38,6 @@ def _git_worktree_add(
     dest_path: Path,
     branch: str,
     force: bool = False,
-    reset_branch: bool = False,
     start_point: str | None = None,
 ) -> tuple[WorktreeResult, str]:
     """Run `git worktree add` for a single repository."""
@@ -47,23 +46,12 @@ def _git_worktree_add(
     if force:
         cmd.append("--force")
 
+    # -B creates the branch, or moves an existing one, so every worktree
+    # starts from the checkout's HEAD -- or from the commit --follow-parent
+    # names -- rather than from wherever an earlier run left the branch.
+    cmd.extend(["-B", branch, str(dest_path)])
     if start_point is not None:
-        # An explicit commit to land on (--follow-parent). The branch is placed
-        # there whether or not it already exists: the point of the flag is the
-        # commit, not wherever the branch happens to sit.
-        flag = "-B" if git_branch_exists(repo_path, branch) else "-b"
-        cmd.extend([flag, branch, str(dest_path), start_point])
-        result_type = (WorktreeResult.CREATED_RESET_BRANCH if flag == "-B"
-                       else WorktreeResult.CREATED_NEW_BRANCH)
-    elif reset_branch:
-        # -B moves an existing branch to this checkout's HEAD, so a new
-        # worktree always starts from the checkout rather than from wherever
-        # an earlier run left the branch.
-        cmd.extend(["-B", branch, str(dest_path)])
-        result_type = WorktreeResult.CREATED_RESET_BRANCH
-    else:
-        cmd.extend(["-b", branch, str(dest_path)])
-        result_type = WorktreeResult.CREATED_NEW_BRANCH
+        cmd.append(start_point)
 
     logger.debug("Running: %s", " ".join(cmd))
 
@@ -83,7 +71,7 @@ def _git_worktree_add(
         stderr = result.stderr.strip()
         return (WorktreeResult.FAILED, f"git worktree add failed: {stderr}")
 
-    return (result_type, "")
+    return (WorktreeResult.CREATED, "")
 
 
 def _prepare_destination(dest_path: Path) -> None:
@@ -495,8 +483,8 @@ def create_nested_worktrees(
 
     # ── Existing branches ────────────────────────────────────────────────
     # Every existing branch is moved: to this checkout's HEAD, or under
-    # --follow-parent to the recorded commit. Decided before anything is
-    # created, so that the pre-flight and the dry run can both report it.
+    # --follow-parent to the recorded commit. One holding commits the
+    # checkout lacks is refused first.
     presence = branch_presence(superds_path, branch, subdatasets)
     to_reset = {d for d, _repo, has in presence if has}
 
@@ -552,16 +540,6 @@ def create_nested_worktrees(
             deleted_ok = yield from _delete_worktree_at(superds_path, worktree_root)
             if not deleted_ok:
                 return
-            # The delete took the old worktree's branch with it, so which
-            # branches are reset rather than new is decided afresh.
-            presence = branch_presence(superds_path, branch, subdatasets)
-            to_reset = {d for d, _repo, has in presence if has}
-
-    def reset_note(dataset_path: str) -> str:
-        """Dry-run message, so `-n` says when a branch would be moved."""
-        if dataset_path not in to_reset:
-            return "would create"
-        return f"would create, resetting existing branch '{branch}'"
 
     # ── Create super dataset worktree ────────────────────────────────────
     if dry_run:
@@ -571,7 +549,7 @@ def create_nested_worktrees(
             destination=worktree_root,
             result=WorktreeResult.SKIPPED_DRY_RUN,
             branch=branch,
-            message=reset_note("."),
+            message="would create",
         )
     else:
         yield WorktreeReport(
@@ -589,7 +567,6 @@ def create_nested_worktrees(
             dest_path=worktree_root,
             branch=branch,
             force=discard_unmerged,
-            reset_branch="." in to_reset,
             start_point=start_points.get("."),
         )
         yield WorktreeReport(
@@ -639,7 +616,7 @@ def create_nested_worktrees(
                 destination=dest_subds,
                 result=WorktreeResult.SKIPPED_DRY_RUN,
                 branch=branch,
-                message=reset_note(subds.rel_path),
+                message="would create",
             )
             continue
 
@@ -658,7 +635,6 @@ def create_nested_worktrees(
             dest_path=dest_subds,
             branch=branch,
             force=discard_unmerged,
-            reset_branch=subds.rel_path in to_reset,
             start_point=start_points.get(subds.rel_path),
         )
 

@@ -67,12 +67,9 @@ try:
                     label, res.get("message", ""),
                 ))
             elif status == "ok":
-                extra = ""
-                if res.get("new_branch"):
-                    extra = " (new branch)"
-                ui.message("{} {} -> {}{}".format(
+                ui.message("{} {} -> {}".format(
                     ac.color_word("create", ac.GREEN),
-                    label, dest, extra,
+                    label, dest,
                 ))
             elif status == "notneeded":
                 if dry_run:
@@ -229,8 +226,6 @@ try:
 
                 if report.result in (
                     WorktreeResult.CREATED,
-                    WorktreeResult.CREATED_NEW_BRANCH,
-                    WorktreeResult.CREATED_RESET_BRANCH,
                     WorktreeResult.CONFIGURED,
                     WorktreeResult.MTIMES_SYNCED,
                 ):
@@ -257,8 +252,6 @@ try:
                     source=str(report.source),
                     dataset_path=report.dataset_path,
                     branch=report.branch,
-                    new_branch=report.result == WorktreeResult.CREATED_NEW_BRANCH,
-                    reset_branch=report.result == WorktreeResult.CREATED_RESET_BRANCH,
                     skip_reason=skip_reason,
                     dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
                     container_config=report.result == WorktreeResult.CONFIGURED,

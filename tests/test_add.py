@@ -34,8 +34,7 @@ def _all_ok(reports: list[WorktreeReport]) -> bool:
 def _succeeded(reports: list[WorktreeReport]) -> list[WorktreeReport]:
     return [
         r for r in reports
-        if r.result in (WorktreeResult.CREATED, WorktreeResult.CREATED_NEW_BRANCH,
-                        WorktreeResult.CREATED_RESET_BRANCH)
+        if r.result == WorktreeResult.CREATED
     ]
 
 
@@ -95,16 +94,17 @@ class TestGitWorktreeAdd:
     def test_create_new_branch(self, datalad_ds: Path, tmp_path: Path):
         dest = tmp_path / "wt"
         result, msg = _git_worktree_add(datalad_ds, dest, "new-branch")
-        assert result == WorktreeResult.CREATED_NEW_BRANCH
+        assert result == WorktreeResult.CREATED
         assert dest.exists()
         assert (dest / ".git").exists()
 
     def test_reset_existing_branch(self, datalad_ds: Path, tmp_path: Path):
         _git(datalad_ds, "branch", "existing-branch")
         dest = tmp_path / "wt"
-        result, msg = _git_worktree_add(datalad_ds, dest, "existing-branch",
-                                        reset_branch=True)
-        assert result == WorktreeResult.CREATED_RESET_BRANCH
+        _commit_in(datalad_ds, "moved-on.txt")   # leaves the branch behind
+        result, msg = _git_worktree_add(datalad_ds, dest, "existing-branch")
+        assert result == WorktreeResult.CREATED
+        assert _head(dest) == _head(datalad_ds)
         assert dest.exists()
 
 
@@ -512,9 +512,6 @@ class TestExistingBranches:
         )
 
         assert _all_ok(reports)
-        reset = [r for r in reports
-                 if r.result == WorktreeResult.CREATED_RESET_BRANCH]
-        assert [r.dataset_path for r in reset] == ["sub-02"]
         # the whole point: the worktree starts where the checkout is now
         assert _head(worktree / "sub-02") == _head(sub02)
         assert (worktree / "sub-02" / "moved-on.txt").exists()
@@ -533,10 +530,8 @@ class TestExistingBranches:
         )
 
         assert _all_ok(reports)
-        reset = [r for r in reports
-                 if r.result == WorktreeResult.CREATED_RESET_BRANCH]
-        assert len(reset) == len(datasets)
-        assert _head(worktree) == _head(superds["super"])
+        for ds in datasets:
+            assert _head(worktree / ds.relative_to(superds["super"])) == _head(ds)
         assert (worktree / "later-work.txt").exists()
 
     def test_a_kept_branch_resumes_under_a_new_name(self, superds: dict):
@@ -580,23 +575,8 @@ class TestExistingBranches:
         )
 
         assert _all_ok(reports)
-        assert any(r.result == WorktreeResult.CREATED_RESET_BRANCH
-                   and r.dataset_path == "sub-02" for r in reports)
+        assert _head(worktree / "sub-02") == _head(superds["sub02"])
         assert not (worktree / "sub-02" / "unfetched-result.txt").exists()
-
-    def test_dry_run_says_the_branch_would_be_reset(self, superds: dict):
-        self._leftover_in_sub02(superds, ahead=False)
-        worktree = superds["wt_location"] / "wt"
-
-        reports = _run_create(
-            superds_path=superds["super"], worktree_path=worktree, branch="runs",
-            dry_run=True,
-        )
-
-        noted = [r for r in reports if "reset" in (r.message or "")]
-        assert [r.dataset_path for r in noted] == ["sub-02"]
-        assert not worktree.exists()
-
 
 
 # ── --follow-parent: the state the parent records, not the branch name ───────

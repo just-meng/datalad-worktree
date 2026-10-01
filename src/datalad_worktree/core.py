@@ -22,8 +22,6 @@ class WorktreeResult(Enum):
     """Outcome of a single worktree operation."""
     STARTING = auto()              # about to create/delete (progress indicator)
     CREATED = auto()
-    CREATED_NEW_BRANCH = auto()
-    CREATED_RESET_BRANCH = auto()  # add: existing branch moved to the source HEAD
     SKIPPED_NOT_INSTALLED = auto()
     SKIPPED_NOT_GIT_REPO = auto()
     SKIPPED_DRY_RUN = auto()

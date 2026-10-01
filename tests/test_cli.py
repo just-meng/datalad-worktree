@@ -78,19 +78,6 @@ class TestRenderReport:
         assert "sub-01" in out
         assert "/dst/sub-01" in out
 
-    def test_created_reset_branch(self, capsys):
-        """A reset existing branch must read apart from a new one."""
-        _render_report(self._make_report(WorktreeResult.CREATED_RESET_BRANCH))
-        out = capsys.readouterr().out
-        assert "create" in out
-        assert "(existing branch reset)" in out
-
-    def test_created_new_branch(self, capsys):
-        _render_report(self._make_report(WorktreeResult.CREATED_NEW_BRANCH))
-        out = capsys.readouterr().out
-        assert "create" in out
-        assert "(new branch)" in out
-
     def test_skipped_dry_run(self, capsys):
         """Shared by add, fetch and delete, so the message carries the verb."""
         _render_report(self._make_report(WorktreeResult.SKIPPED_DRY_RUN,

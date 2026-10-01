@@ -58,15 +58,6 @@ def _render_report(report: WorktreeReport) -> None:
             # Clear the STARTING line
             print("\033[2K", end="")
         print(f"{C.GREEN}create{C.NC} {label} -> {dest}")
-    elif report.result == WorktreeResult.CREATED_NEW_BRANCH:
-        if is_tty:
-            print("\033[2K", end="")
-        print(f"{C.GREEN}create{C.NC} {label} -> {dest} {C.DIM}(new branch){C.NC}")
-    elif report.result == WorktreeResult.CREATED_RESET_BRANCH:
-        if is_tty:
-            print("\033[2K", end="")
-        print(f"{C.GREEN}create{C.NC} {label} -> {dest} "
-              f"{C.DIM}(existing branch reset){C.NC}")
     elif report.result == WorktreeResult.SKIPPED_DRY_RUN:
         # Shared by add, fetch and delete: the message carries the verb.
         print(f"{C.CYAN}dry-run{C.NC} {label} -> {dest} {C.DIM}({report.message}){C.NC}")
@@ -256,8 +247,6 @@ def _cmd_add(args) -> int:
             reports.append(report)
             if report.result in (
                 WorktreeResult.CREATED,
-                WorktreeResult.CREATED_NEW_BRANCH,
-                WorktreeResult.CREATED_RESET_BRANCH,
             ):
                 created += 1
             elif report.result in (
