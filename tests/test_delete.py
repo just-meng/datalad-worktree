@@ -481,6 +481,21 @@ class TestDeleteDryRun:
         assert predicted == [".", "sub-02"]
         assert refused(dry_run=False) == predicted
 
+    def test_promises_only_what_the_real_run_deletes(self, superds: dict):
+        """All-or-nothing in -n too: no 'would delete' around a refusal."""
+        wt_path = _create_worktrees(superds, "rm-dry-all", "feat/rm-dry-all")
+        (wt_path / "sub-02" / "untracked.txt").write_text("precious\n")
+
+        predicted = sorted(r.dataset_path for r in delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-dry-all",
+            dry_run=True,
+        ) if r.result == WorktreeResult.SKIPPED_DRY_RUN)
+        deleted = sorted(r.dataset_path for r in delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-dry-all",
+        ) if r.result == WorktreeResult.DELETED)
+
+        assert predicted == deleted
+
     def test_predicts_the_unmerged_branch_refusal(self, superds: dict):
         wt_path = _create_worktrees(superds, "rm-dry-br", "feat/rm-dry-br")
         (wt_path / "new-file.txt").write_text("branch-only\n")

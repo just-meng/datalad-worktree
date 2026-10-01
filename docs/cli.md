@@ -129,6 +129,7 @@ Deletes the worktree in every dataset, deepest first. It does not ask for confir
 
 - **The branch is deleted too,** unless `--keep-branch`. A branch holding commits its checkout lacks is kept and reported as an error, unless `-f`.
 - **All-or-nothing.** If any worktree has uncommitted or untracked changes, nothing is deleted, unless `-f`.
+- **`-n` runs the same check and stops,** so it never promises a deletion the real run refuses.
 - **The main working tree is never deleted.**
   - Named by path, it is reported as "the main working tree, not a worktree".
   - Named by branch, it is passed over: "no worktree on branch".

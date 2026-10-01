@@ -76,6 +76,7 @@ A worktree exists for one run: create it, run the pipeline, fetch the results ho
   - A `.git`-is-a-directory test is wrong both ways and fails four tests.
 - **The `rmtree` fallback never overrules git's refusal of a dirty worktree.** `git worktree remove` fails on every DataLad worktree, whose `.git` is not a gitlink file, so the fallback ran every time. It deleted uncommitted and untracked work without `-f`. It now runs only on a clean worktree. A subdataset directory the command itself just deleted does not count as a change.
 - **All-or-nothing on dirty worktrees, like `add`.** A dirty worktree is refused, and so is every dataset above it, since deleting a parent deletes the child. Deleting the clean rest would leave a half-deleted hierarchy. The unmerged-branch refusal stays per branch: the worktree goes, the branch and its commits stay.
+  - `-n` runs this same check before predicting. It used to have its own copy that refused per worktree, so with one dirty subdataset it promised to delete the clean ones, and the real run then deleted nothing.
 - **The branch goes by default.** A kept branch is one the next `add` has to reset. `git branch -d` still refuses an unmerged one.
 - **No confirmation prompt.** The refusals protect work that hasn't come home yet, so a prompt only added friction. It also blocked non-interactive callers such as scripts and agents. `-n` previews.
 

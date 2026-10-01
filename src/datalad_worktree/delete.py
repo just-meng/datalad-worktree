@@ -210,13 +210,12 @@ def _predict(
     targets: list[DeleteTarget], delete_branch: bool, force: bool,
 ) -> Iterator[WorktreeReport]:
     """
-    What deleting ``targets`` would do, refusals included, without doing it.
+    What deleting ``targets`` would do, without doing it.
 
-    Checked with the real run's own tests: a worktree with local changes is
-    refused without ``force``, and so is a branch ``git branch -d`` would call
-    unmerged -- approximated as not an ancestor of the checkout's HEAD.
-    Children are still present here, so a dirty one shows in its parent's
-    status and the parent is refused too, as it would be.
+    Runs after the pre-flight, so every worktree here would be deleted. What
+    is left to predict is the branch: one ``git branch -d`` would call
+    unmerged -- approximated as not an ancestor of the checkout's HEAD -- is
+    refused without ``force``.
     """
     for t in targets:
         def report(result: WorktreeResult, message: str) -> WorktreeReport:
@@ -226,9 +225,6 @@ def _predict(
                 branch=t.branch, message=message,
             )
 
-        if not force and _has_local_changes(Path(t.worktree_path)):
-            yield report(WorktreeResult.FAILED, _dirty_message(t.worktree_path))
-            continue
         yield report(WorktreeResult.SKIPPED_DRY_RUN, "would delete")
 
         if not (delete_branch and t.branch):
@@ -402,10 +398,6 @@ def delete_nested_worktrees(
     # Yield skipped reports
     yield from skipped
 
-    if dry_run:
-        yield from _predict(targets, delete_branch, force)
-        return
-
     # ── Pre-flight: all-or-nothing, like add ─────────────────────────────
     # A dirty worktree is refused, and so is every dataset above it, so
     # deleting the rest would leave a half-deleted hierarchy behind.
@@ -419,6 +411,11 @@ def delete_nested_worktrees(
                     branch=t.branch, message=_dirty_message(t.worktree_path),
                 )
             return
+
+    # -n stops here, so it refuses exactly what the real run refuses.
+    if dry_run:
+        yield from _predict(targets, delete_branch, force)
+        return
 
     # Delete each target
     for t in targets:
