@@ -348,6 +348,39 @@ class TestReplacingWorktrees:
         # the worktree and its commit survive untouched
         assert _head(worktree) == unmerged
 
+    def test_a_later_refusal_leaves_the_old_worktree_in_place(
+        self, superds: dict,
+    ):
+        """All-or-nothing: no check may run after the old worktree is gone."""
+        worktree = superds["wt_location"] / "wt"
+        _run_create(superds_path=superds["super"], worktree_path=worktree,
+                    branch="runs")
+        before = _head(worktree)
+
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="runs",
+                              follow_parent=True, at_commit="deadbeef")
+
+        assert any("cannot resolve commit" in r.message for r in _failed(reports))
+        assert _head(worktree) == before
+        assert _branch_of(worktree) == "runs"
+
+    def test_a_branch_checked_out_elsewhere_leaves_it_in_place(
+        self, superds: dict,
+    ):
+        worktree = superds["wt_location"] / "wt"
+        elsewhere = superds["wt_location"] / "elsewhere"
+        _run_create(superds_path=superds["super"], worktree_path=worktree,
+                    branch="runs")
+        _run_create(superds_path=superds["super"], worktree_path=elsewhere,
+                    branch="other")
+
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="other")
+
+        assert any("already checked out" in r.message for r in _failed(reports))
+        assert _branch_of(worktree) == "runs"
+
     def test_force_discards_it(self, superds: dict):
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,

@@ -54,6 +54,7 @@ A worktree exists for one run: create it, run the pipeline, fetch the results ho
   - Resetting moves a pointer, so a branch holding unfetched commits refuses.
 - **Replace by default** (#28). A worktree that is merged or behind holds nothing the main checkout lacks. The branch goes too, so the new worktree starts from the main checkout, not from the old run.
 - **All-or-nothing pre-flight.** A half-created hierarchy is harder to clean up than a refusal. `-n` runs the same checks: a dry run that promises what the real run refuses is worse than none.
+  - The replaced worktree is deleted only after every check. Deleting it first spared the checks from having to ignore it, but a later refusal then left the old worktree gone and nothing in its place. The checks are told which worktree is being replaced instead.
 - **`--follow-parent`** (#29). A subdataset's branch tip and the commit its parent records are different things. Checking out the tip is how a fresh worktree was born with a modified gitlink. The recorded commits are checked for existence before anything is created; otherwise git fails partway, after the superdataset worktree already exists.
 - **Discovery reads `.gitmodules` with `configparser`,** with no DataLad call and no gitpython, so DataLad stays optional.
 

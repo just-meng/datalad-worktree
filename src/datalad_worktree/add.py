@@ -401,9 +401,11 @@ def create_nested_worktrees(
     else:
         subdatasets = discover_subdatasets(superds_path)
 
-    # ── Replace an existing worktree ─────────────────────────────────────
-    # Done before the pre-flight so that the path and branch conflicts it
-    # would otherwise report are already gone.
+    # ── Find an existing worktree to replace ─────────────────────────────
+    # Only looked up here. It is deleted after every check below has passed,
+    # so that a refusal leaves it in place; the checks are told about it
+    # through ``replaced_root`` instead.
+    existing: list[tuple[str, Path, Path]] = []
     replaced_root: Path | None = None
     if replace or discard_unmerged:
         existing = existing_worktrees(superds_path, worktree_root, subdatasets)
@@ -422,24 +424,6 @@ def create_nested_worktrees(
                             message=message,
                         )
                     return
-            if dry_run:
-                for dataset_path, _repo, destination in reversed(existing):
-                    yield WorktreeReport(
-                        dataset_path=dataset_path,
-                        source=superds_path,
-                        destination=destination,
-                        result=WorktreeResult.SKIPPED_DRY_RUN,
-                        branch=branch,
-                        message=f"would replace the worktree at {destination}",
-                    )
-            else:
-                from datalad_worktree.delete import delete_nested_worktrees
-                yield from delete_nested_worktrees(
-                    superds_path=superds_path,
-                    target=str(worktree_root),
-                    delete_branch=True,
-                    force=True,
-                )
 
     # ── --follow-parent pre-flight ───────────────────────────────────────
     # Refuse before creating anything if the commit cannot be resolved, or if a
@@ -524,6 +508,32 @@ def create_nested_worktrees(
                 message=msg,
             )
         return
+
+    # ── Replace the existing worktree ────────────────────────────────────
+    # The first change made: everything that can refuse has run by now.
+    if existing:
+        if dry_run:
+            for dataset_path, _repo, destination in reversed(existing):
+                yield WorktreeReport(
+                    dataset_path=dataset_path,
+                    source=superds_path,
+                    destination=destination,
+                    result=WorktreeResult.SKIPPED_DRY_RUN,
+                    branch=branch,
+                    message=f"would replace the worktree at {destination}",
+                )
+        else:
+            from datalad_worktree.delete import delete_nested_worktrees
+            yield from delete_nested_worktrees(
+                superds_path=superds_path,
+                target=str(worktree_root),
+                delete_branch=True,
+                force=True,
+            )
+            # The delete took the old worktree's branch with it, so which
+            # branches are reset rather than new is decided afresh.
+            presence = branch_presence(superds_path, branch, subdatasets)
+            to_reset = {d for d, _repo, has in presence if has}
 
     def reset_note(dataset_path: str) -> str:
         """Dry-run message, so `-n` says when a branch would be moved."""

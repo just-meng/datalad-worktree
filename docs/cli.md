@@ -42,10 +42,18 @@ worktree add -f runs /tmp/worktrees/runs   # ... even if it holds commits never 
 
 ### Pre-flight
 
-Before creating anything, `add` checks every dataset. It verifies the branch isn't checked out elsewhere, the superdataset's destination is free, and no existing branch holds commits its checkout lacks. If any check fails, nothing is created. `-n` runs the same checks.
+Before changing anything, `add` checks every dataset. If any check fails, it refuses and touches nothing, not even an existing worktree. It refuses when:
 
-- **Replacement runs before these checks,** so if a check then fails, the old worktree is already gone.
-- **Once creation starts,** a failing subdataset doesn't stop the others. A failing superdataset stops everything.
+- an existing worktree or branch holds commits the main checkout lacks, unless `-f`;
+- a directory at `<worktree-path>` is not one git knows as a worktree;
+- `branch` is checked out in a worktree at another path;
+- with `--follow-parent`, the commit can't be resolved, or a subdataset lacks the commit recorded for it.
+
+Only once every check has passed is an existing worktree deleted and the new ones created. Once creation starts, a failing subdataset doesn't stop the others. A failing superdataset stops everything.
+
+### Dry run
+
+`-n` runs the pre-flight and stops, changing nothing. It reports the refusals, or what the real run would do: the worktree it would replace, and for each dataset where its worktree would go and whether `branch` would be new or reset.
 
 ### `--follow-parent`
 
