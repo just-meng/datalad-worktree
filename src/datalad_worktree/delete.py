@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from datalad_worktree.add import unmerged_worktrees
 from datalad_worktree.core import (
     WorktreeReport,
     WorktreeResult,
@@ -123,12 +124,12 @@ def _find_worktree_by_branch(
     return None, None
 
 
-def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = False) -> str:
+def _git_worktree_remove(repo_path: Path, worktree_path: Path) -> str:
     """
-    Delete a worktree. Tries `git worktree remove` first; if that fails
-    (e.g. .git is a directory instead of a gitlink file, common in DataLad),
-    falls back to deleting the directory and pruning.
-    Returns error message or empty string.
+    Delete a worktree, uncommitted changes included. Tries `git worktree
+    remove --force` first; if that fails (e.g. .git is a directory instead of
+    a gitlink file, common in DataLad), falls back to deleting the directory
+    and pruning. Returns error message or empty string.
     """
     if is_main_worktree(worktree_path):
         # Never reachable through the normal resolution path, which filters
@@ -136,10 +137,8 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
         # rmtree fallback below safe, so it stays.
         return f"refusing to delete {worktree_path}: it is the main working tree"
 
-    cmd = ["git", "-C", str(repo_path), "worktree", "remove"]
-    if force:
-        cmd.append("--force")
-    cmd.append(str(worktree_path))
+    cmd = ["git", "-C", str(repo_path), "worktree", "remove", "--force",
+           str(worktree_path)]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
@@ -147,7 +146,7 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
 
     # Fallback: delete directory manually and prune. Reached when `git
     # worktree remove` fails on a DataLad repo whose .git is a directory
-    # rather than a gitlink file.
+    # rather than a gitlink file, or on a worktree containing submodules.
     wt = Path(worktree_path)
     if wt.exists():
         try:
@@ -158,6 +157,28 @@ def _git_worktree_remove(repo_path: Path, worktree_path: Path, force: bool = Fal
         return ""
 
     return result.stderr.strip()
+
+
+def _predict(
+    targets: list[DeleteTarget], delete_branch: bool,
+) -> Iterator[WorktreeReport]:
+    """
+    What deleting ``targets`` would do, without doing it.
+
+    Runs after the pre-flight, which is where every refusal comes from, so
+    everything here would be deleted.
+    """
+    for t in targets:
+        def report(message: str) -> WorktreeReport:
+            return WorktreeReport(
+                dataset_path=t.dataset_path, source=t.repo_path,
+                destination=t.worktree_path, result=WorktreeResult.SKIPPED_DRY_RUN,
+                branch=t.branch, message=message,
+            )
+
+        yield report("would delete")
+        if delete_branch and t.branch:
+            yield report(f"would delete branch '{t.branch}'")
 
 
 def _git_branch_delete(repo_path: Path, branch: str, force: bool = False) -> str:
@@ -276,8 +297,9 @@ def resolve_delete_targets(
 def delete_nested_worktrees(
     superds_path: Path,
     target: str,
-    delete_branch: bool = False,
+    delete_branch: bool = True,
     force: bool = False,
+    dry_run: bool = False,
 ) -> Iterator[WorktreeReport]:
     """
     Delete nested worktrees by path or branch name.
@@ -296,9 +318,10 @@ def delete_nested_worktrees(
     target : str
         Either a worktree path or a branch name.
     delete_branch : bool
-        If True, also delete the branch (using safe ``git branch -d``).
+        If True (the default), also delete the branch (using safe
+        ``git branch -d``).
     force : bool
-        Pass ``--force`` to ``git worktree remove`` and use ``-D`` for
+        Delete despite commits the main checkout lacks, and use ``-D`` for
         branch deletion.
 
     Yields
@@ -311,9 +334,36 @@ def delete_nested_worktrees(
     # Yield skipped reports
     yield from skipped
 
+    # ── Pre-flight: all-or-nothing, like add ─────────────────────────────
+    # Refuses on commits the main checkout lacks, and on nothing else:
+    # uncommitted changes are discarded, as add discards them when it
+    # replaces a worktree.
+    if not force:
+        by_path = {t.dataset_path: t for t in targets}
+        # A kept branch keeps its commits, so only a worktree whose commits
+        # go with it is checked: its branch is deleted, or it has none.
+        refused = unmerged_worktrees([
+            (t.dataset_path, t.repo_path, Path(t.worktree_path)) for t in targets
+            if delete_branch or not t.branch
+        ])
+        if refused:
+            for dataset_path, message in refused:
+                t = by_path[dataset_path]
+                yield WorktreeReport(
+                    dataset_path=t.dataset_path, source=t.repo_path,
+                    destination=t.worktree_path, result=WorktreeResult.FAILED,
+                    branch=t.branch, message=message,
+                )
+            return
+
+    # -n stops here, so it refuses exactly what the real run refuses.
+    if dry_run:
+        yield from _predict(targets, delete_branch)
+        return
+
     # Delete each target
     for t in targets:
-        err = _git_worktree_remove(t.repo_path, t.worktree_path, force=force)
+        err = _git_worktree_remove(t.repo_path, t.worktree_path)
         if err:
             yield WorktreeReport(
                 dataset_path=t.dataset_path,
@@ -333,7 +383,7 @@ def delete_nested_worktrees(
             branch=t.branch,
         )
 
-        # Delete branch if requested
+        # Delete branch unless asked to keep it
         if delete_branch and t.branch:
             err = _git_branch_delete(t.repo_path, t.branch, force=force)
             if err:

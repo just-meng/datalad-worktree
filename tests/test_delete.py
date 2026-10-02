@@ -107,28 +107,23 @@ class TestDeleteByBranch:
         )
 
 
-class TestDeleteWithForce:
-    def test_force_deletes_dirty_worktree(self, superds: dict):
-        """--force deletes worktrees even with uncommitted changes."""
-        wt_path = _create_worktrees(superds, "rm-force", "feat/rm-force")
+class TestWhatDeleteDiscards:
+    def test_uncommitted_changes_are_discarded(self, superds: dict):
+        """Like add: only unfetched commits refuse, uncommitted work goes."""
+        wt_path = _create_worktrees(superds, "rm-dirty", "feat/rm-dirty")
+        (wt_path / "staged.txt").write_text("uncommitted\n")
+        _git(wt_path, "add", "staged.txt")
+        (wt_path / "sub-02" / "untracked.txt").write_text("scratch\n")
 
-        # Make the worktree dirty (uncommitted changes)
-        (wt_path / "dirty-file.txt").write_text("uncommitted\n")
-        _git(wt_path, "add", "dirty-file.txt")
-
-        # Without force, git worktree remove would refuse
-        # With force, it should succeed
         reports = list(delete_nested_worktrees(
-            superds_path=superds["super"],
-            target="feat/rm-force",
-            force=True,
+            superds_path=superds["super"], target="feat/rm-dirty",
         ))
-        deleted = [r for r in reports if r.result == WorktreeResult.DELETED]
-        assert len(deleted) == 4
+
+        assert not [r for r in reports if r.result == WorktreeResult.FAILED]
         assert not wt_path.exists()
 
     def test_force_delete_branch_unmerged(self, superds: dict):
-        """--force with --delete-branch uses -D to delete unmerged branches."""
+        """--force uses -D to delete unmerged branches."""
         wt_path = _create_worktrees(superds, "rm-force-br", "feat/force-del")
 
         # Make a commit on the branch so it's "unmerged" relative to main
@@ -153,14 +148,54 @@ class TestDeleteWithForce:
         assert out.stdout.strip() == ""
 
 
+class TestDeleteRefusesUnfetchedCommits:
+    """All-or-nothing, like add: unfetched commits stop the whole delete."""
+
+    def _with_unfetched_commit(self, superds: dict, name: str) -> Path:
+        wt_path = _create_worktrees(superds, name, f"feat/{name}")
+        (wt_path / "sub-02" / "new-file.txt").write_text("branch-only\n")
+        _git(wt_path / "sub-02", "add", "new-file.txt")
+        _git(wt_path / "sub-02", "commit", "-m", "branch-only commit")
+        _git(wt_path, "add", "sub-02")
+        _git(wt_path, "commit", "-m", "record sub-02")
+        return wt_path
+
+    def test_nothing_is_deleted(self, superds: dict):
+        wt_path = self._with_unfetched_commit(superds, "rm-unfetched")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-unfetched",
+        ))
+
+        failed = [r for r in reports if r.result == WorktreeResult.FAILED]
+        assert sorted(r.dataset_path for r in failed) == [".", "sub-02"]
+        assert all("unmerged work" in r.message for r in failed)
+        assert not [r for r in reports if r.result in (
+            WorktreeResult.DELETED, WorktreeResult.DELETED_BRANCH)]
+        for dataset in (".", "sub-01", "sub-01/derivatives", "sub-02"):
+            assert (wt_path / dataset / ".git").exists(), dataset
+
+    def test_a_kept_branch_keeps_the_commits_so_it_deletes(self, superds: dict):
+        wt_path = self._with_unfetched_commit(superds, "rm-keep")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-keep",
+            delete_branch=False,
+        ))
+
+        assert not [r for r in reports if r.result == WorktreeResult.FAILED]
+        assert not wt_path.exists()
+        assert _git(superds["sub02"], "branch", "--list",
+                    "feat/rm-keep").stdout.strip()
+
+
 class TestDeleteWithDeleteBranch:
-    def test_deletes_branch(self, superds: dict):
+    def test_deletes_branch_by_default(self, superds: dict):
         wt_path = _create_worktrees(superds, "rm-delbr", "feat/del-branch")
 
         reports = list(delete_nested_worktrees(
             superds_path=superds["super"],
             target="feat/del-branch",
-            delete_branch=True,
         ))
         deleted_branches = [
             r for r in reports if r.result == WorktreeResult.DELETED_BRANCH
@@ -171,6 +206,21 @@ class TestDeleteWithDeleteBranch:
         # Verify the branch is gone
         out = _git(superds["super"], "branch", "--list", "feat/del-branch")
         assert out.stdout.strip() == ""
+
+    def test_keeps_branch_when_asked(self, superds: dict):
+        wt_path = _create_worktrees(superds, "rm-keepbr", "feat/keep-branch")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"],
+            target="feat/keep-branch",
+            delete_branch=False,
+        ))
+        assert not [
+            r for r in reports if r.result == WorktreeResult.DELETED_BRANCH
+        ]
+        assert not wt_path.exists()
+        out = _git(superds["super"], "branch", "--list", "feat/keep-branch")
+        assert out.stdout.strip()
 
 
 class TestDeleteFallback:
@@ -193,7 +243,7 @@ class TestDeleteFallback:
             # Already a directory (DataLad default) — this is the case we test
             pass
 
-        # _git_worktree_remove should fall back to rmtree + prune
+        # _git_worktree_remove should fall back to rmtree + prune.
         err = _git_worktree_remove(superds["super"], wt_path)
         assert err == ""
         assert not wt_path.exists()
@@ -310,7 +360,7 @@ class TestMainWorktreeIsNeverDeleted:
 
     def test_remove_helper_refuses_it_directly(self, text2git_ds: Path):
         """Defence in depth: the guard that makes the rmtree fallback safe."""
-        err = _git_worktree_remove(text2git_ds, text2git_ds, force=True)
+        err = _git_worktree_remove(text2git_ds, text2git_ds)
 
         assert "main working tree" in err
         assert (text2git_ds / "precious.txt").exists()
@@ -402,3 +452,54 @@ class TestDeleteRunFromInsideAWorktree:
         assert not [r for r in reports if r.result == WorktreeResult.DELETED]
         assert (text2git_ds / "precious.txt").exists()
         assert (text2git_ds / ".git").exists()
+
+
+class TestDeleteDryRun:
+    """-n reports what delete would do, refusals included, and changes nothing."""
+
+    def test_changes_nothing(self, superds: dict):
+        wt_path = _create_worktrees(superds, "rm-dry", "feat/rm-dry")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-dry", dry_run=True,
+        ))
+
+        would = [r.message for r in reports
+                 if r.result == WorktreeResult.SKIPPED_DRY_RUN]
+        assert would.count("would delete") == 4
+        assert would.count("would delete branch 'feat/rm-dry'") == 4
+        assert wt_path.exists()
+        assert _git(superds["super"], "branch", "--list", "feat/rm-dry").stdout.strip()
+
+    def test_promises_only_what_the_real_run_deletes(self, superds: dict):
+        """All-or-nothing in -n too: no 'would delete' around a refusal."""
+        wt_path = _create_worktrees(superds, "rm-dry-all", "feat/rm-dry-all")
+        (wt_path / "sub-02" / "result.txt").write_text("unfetched\n")
+        _git(wt_path / "sub-02", "add", "result.txt")
+        _git(wt_path / "sub-02", "commit", "-m", "unfetched commit")
+
+        predicted = sorted(r.dataset_path for r in delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-dry-all",
+            dry_run=True,
+        ) if r.result == WorktreeResult.SKIPPED_DRY_RUN)
+        deleted = sorted(r.dataset_path for r in delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-dry-all",
+        ) if r.result == WorktreeResult.DELETED)
+
+        assert predicted == deleted
+
+    def test_predicts_the_unmerged_branch_refusal(self, superds: dict):
+        wt_path = _create_worktrees(superds, "rm-dry-br", "feat/rm-dry-br")
+        (wt_path / "new-file.txt").write_text("branch-only\n")
+        _git(wt_path, "add", "new-file.txt")
+        _git(wt_path, "commit", "-m", "branch-only commit")
+
+        reports = list(delete_nested_worktrees(
+            superds_path=superds["super"], target="feat/rm-dry-br", dry_run=True,
+        ))
+
+        failed = [r for r in reports if r.result == WorktreeResult.FAILED]
+        assert [r.dataset_path for r in failed] == ["."]
+        assert "unmerged work" in failed[0].message
+        assert not [r for r in reports
+                    if r.result == WorktreeResult.SKIPPED_DRY_RUN]

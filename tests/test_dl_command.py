@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -55,8 +56,6 @@ class TestWorktreeAdd:
             assert "dataset_path" in res
             assert "worktree_root" in res
             assert res["type"] == "dataset"
-
-        assert all(r.get("new_branch") for r in ok_results)
 
     def test_dry_run(self, superds: dict):
         wt_path = superds["wt_location"] / "dl-dry"
@@ -204,17 +203,33 @@ class TestWorktreeDelete:
         assert not wt_path.exists()
 
     def test_delete_branch(self, superds: dict):
-        """--delete-branch produces branch_deleted results."""
+        """The branch is deleted by default, producing branch_deleted results."""
         self._setup_worktrees(superds, "dl-rm-delbr", "feat/dl-delbr")
 
         results = _call_interface(
             WorktreeDelete,
             target="feat/dl-delbr",
             dataset=str(superds["super"]),
-            delete_branch=True,
         )
         branch_deleted = [r for r in results if r.get("branch_deleted")]
         assert len(branch_deleted) == 4
+
+    def test_keep_branch(self, superds: dict):
+        """--keep-branch deletes the worktrees but leaves the branch."""
+        self._setup_worktrees(superds, "dl-rm-keepbr", "feat/dl-keepbr")
+
+        results = _call_interface(
+            WorktreeDelete,
+            target="feat/dl-keepbr",
+            dataset=str(superds["super"]),
+            keep_branch=True,
+        )
+        assert not [r for r in results if r.get("branch_deleted")]
+        out = subprocess.run(
+            ["git", "branch", "--list", "feat/dl-keepbr"],
+            cwd=superds["super"], capture_output=True, text=True,
+        )
+        assert out.stdout.strip()
 
     def test_skip_nonexistent_branch(self, superds: dict):
         results = _call_interface(

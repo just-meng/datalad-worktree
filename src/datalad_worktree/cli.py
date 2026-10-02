@@ -57,23 +57,10 @@ def _render_report(report: WorktreeReport) -> None:
         if is_tty:
             # Clear the STARTING line
             print("\033[2K", end="")
-        # The branch was already there and was checked out where it stood --
-        # said out loud, because the alternative (a leftover being reset) is
-        # the other thing `add` can do with an existing branch.
-        print(f"{C.GREEN}create{C.NC} {label} -> {dest} "
-              f"{C.DIM}(existing branch){C.NC}")
-    elif report.result == WorktreeResult.CREATED_NEW_BRANCH:
-        if is_tty:
-            print("\033[2K", end="")
-        print(f"{C.GREEN}create{C.NC} {label} -> {dest} {C.DIM}(new branch){C.NC}")
-    elif report.result == WorktreeResult.CREATED_RESET_BRANCH:
-        if is_tty:
-            print("\033[2K", end="")
-        print(f"{C.GREEN}create{C.NC} {label} -> {dest} "
-              f"{C.DIM}(leftover branch reset){C.NC}")
+        print(f"{C.GREEN}create{C.NC} {label} -> {dest}")
     elif report.result == WorktreeResult.SKIPPED_DRY_RUN:
-        note = f" {C.DIM}({report.message}){C.NC}" if report.message else ""
-        print(f"{C.GREEN}create{C.NC} {C.DIM}[DRY-RUN]{C.NC} {label} -> {dest}{note}")
+        # Shared by add, fetch and delete: the message carries the verb.
+        print(f"{C.CYAN}dry-run{C.NC} {label} -> {dest} {C.DIM}({report.message}){C.NC}")
     elif report.result in (
         WorktreeResult.SKIPPED_NOT_INSTALLED,
         WorktreeResult.SKIPPED_NOT_GIT_REPO,
@@ -94,7 +81,8 @@ def _render_report(report: WorktreeReport) -> None:
     elif report.result == WorktreeResult.DELETED:
         print(f"{C.GREEN}delete{C.NC} {label} -> {dest}")
     elif report.result == WorktreeResult.DELETED_BRANCH:
-        print(f"{C.GREEN}delete{C.NC} {label} branch '{report.branch}'")
+        print(f"{C.GREEN}delete{C.NC} {label} branch '{report.branch}' "
+              f"{C.DIM}(--keep-branch keeps it){C.NC}")
     elif report.result == WorktreeResult.FAILED:
         if is_tty:
             print("\033[2K", end="")
@@ -111,13 +99,6 @@ def build_parser():
         prog="worktree",
         description="Manage nested git worktrees for DataLad dataset hierarchies.",
     )
-    parser.add_argument(
-        "--no-color",
-        action="store_true",
-        default=False,
-        help="disable colored output",
-    )
-
     sub = parser.add_subparsers(dest="command")
 
     # ── add ──────────────────────────────────────────────────────────────
@@ -156,10 +137,6 @@ def build_parser():
         help="take each subdataset's state from the commit its parent records "
              "instead of from the branch name; with a commit, put the "
              "superdataset there too and mirror that whole state",
-    )
-    add_p.add_argument(
-        "--no-create-branch", action="store_true", default=False,
-        help="don't create new branches; only checkout existing ones",
     )
     add_p.add_argument(
         "--no-bindpaths", action="store_true", default=False,
@@ -218,16 +195,18 @@ def build_parser():
         help="worktree path or branch name to delete",
     )
     del_p.add_argument(
-        "--delete-branch", action="store_true", default=False,
-        help="also delete the branch (safe delete; refuses if unmerged)",
+        "-n", "--dry-run", action="store_true", default=False,
+        help="show what would be deleted, and what would be refused",
+    )
+    del_p.add_argument(
+        "--keep-branch", action="store_true", default=False,
+        help="keep the branch, and with it any commits the main checkout "
+             "lacks (default: delete it)",
     )
     del_p.add_argument(
         "-f", "--force", action="store_true", default=False,
-        help="force deletion even with uncommitted changes; force-delete branch",
-    )
-    del_p.add_argument(
-        "-y", "--yes", action="store_true", default=False,
-        help="skip confirmation prompt",
+        help="delete despite commits the main checkout lacks, discarding "
+             "them",
     )
     del_p.add_argument(
         "-d", "--dataset", type=Path, default=None,
@@ -254,7 +233,6 @@ def _cmd_add(args) -> int:
             superds_path=superds_path,
             worktree_path=worktree_path,
             branch=args.branch,
-            create_branch=not args.no_create_branch,
             discard_unmerged=args.force,
             follow_parent=args.follow_parent is not None,
             at_commit=(None if args.follow_parent in (None, "HEAD")
@@ -269,8 +247,6 @@ def _cmd_add(args) -> int:
             reports.append(report)
             if report.result in (
                 WorktreeResult.CREATED,
-                WorktreeResult.CREATED_NEW_BRANCH,
-                WorktreeResult.CREATED_RESET_BRANCH,
             ):
                 created += 1
             elif report.result in (
@@ -287,6 +263,7 @@ def _cmd_add(args) -> int:
     if args.dry_run:
         would_create = sum(
             1 for r in reports if r.result == WorktreeResult.SKIPPED_DRY_RUN
+            and r.message.startswith("would create")
         )
         parts = [f"{would_create} would be created"]
         if skipped:
@@ -389,76 +366,36 @@ def _cmd_list(args) -> int:
 
 
 def _cmd_delete(args) -> int:
-    from datalad_worktree.delete import (
-        delete_nested_worktrees,
-        resolve_delete_targets,
-    )
+    from datalad_worktree.delete import delete_nested_worktrees
 
     superds_path = (args.dataset or Path.cwd()).resolve()
 
-    # ── Resolve targets ─────────────────────────────────────────────────
-    try:
-        targets, skipped = resolve_delete_targets(superds_path, args.target)
-    except ValueError as e:
-        print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
-        return 1
-
-    if not targets:
-        for report in skipped:
-            _render_report(report)
-        print(f"\n0 deleted, {len(skipped)} skipped")
-        return 0
-
-    # ── Show preview and confirm ────────────────────────────────────────
-    col_width = max(len(t.dataset_path) for t in targets) + 2
-
-    print(f"Will delete {len(targets)} worktree(s):")
-    for t in targets:
-        print(f"  {t.dataset_path:<{col_width}}{t.worktree_path}")
-    if args.delete_branch:
-        branches = sorted({t.branch for t in targets if t.branch})
-        if branches:
-            print(f"Will also delete branch: {', '.join(branches)}")
-
-    if not args.yes:
-        try:
-            answer = input("\nProceed? [y/N] ")
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return 1
-        if answer.strip().lower() != "y":
-            print("Aborted.")
-            return 1
-
-    # ── Delete ──────────────────────────────────────────────────────────
     try:
         reports: list[WorktreeReport] = []
-        deleted = 0
-        skipped_count = len(skipped)
         for report in delete_nested_worktrees(
             superds_path=superds_path,
             target=args.target,
-            delete_branch=args.delete_branch,
+            delete_branch=not args.keep_branch,
             force=args.force,
+            dry_run=args.dry_run,
         ):
             reports.append(report)
             _render_report(report)
-            if report.result == WorktreeResult.DELETED:
-                deleted += 1
-            elif report.result == WorktreeResult.SKIPPED_NO_WORKTREE:
-                skipped_count += 1
     except ValueError as e:
         print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
         return 1
 
-    has_failures = any(r.result == WorktreeResult.FAILED for r in reports)
-
-    parts = [f"{deleted} deleted"]
-    if skipped_count:
-        parts.append(f"{skipped_count} skipped")
+    deleted = sum(r.result == WorktreeResult.DELETED for r in reports)
+    if args.dry_run:
+        deleted = sum(r.result == WorktreeResult.SKIPPED_DRY_RUN
+                      and r.message == "would delete" for r in reports)
+    skipped = sum(r.result == WorktreeResult.SKIPPED_NO_WORKTREE for r in reports)
+    parts = [f"{deleted} {'would be deleted' if args.dry_run else 'deleted'}"]
+    if skipped:
+        parts.append(f"{skipped} skipped")
     print(f"\n{', '.join(parts)}")
 
-    return 1 if has_failures else 0
+    return 1 if any(r.result == WorktreeResult.FAILED for r in reports) else 0
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -468,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.no_color or not sys.stdout.isatty():
+    if not sys.stdout.isatty():
         _Colors.disable()
 
     if args.command is None:

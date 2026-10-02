@@ -67,12 +67,9 @@ try:
                     label, res.get("message", ""),
                 ))
             elif status == "ok":
-                extra = ""
-                if res.get("new_branch"):
-                    extra = " (new branch)"
-                ui.message("{} {} -> {}{}".format(
+                ui.message("{} {} -> {}".format(
                     ac.color_word("create", ac.GREEN),
-                    label, dest, extra,
+                    label, dest,
                 ))
             elif status == "notneeded":
                 if dry_run:
@@ -152,12 +149,6 @@ try:
                 default=None,
                 metavar="COMMIT",
             ),
-            no_create_branch=Parameter(
-                args=("--no-create-branch",),
-                doc="Fail if the branch doesn't exist instead of creating it",
-                action="store_true",
-                default=False,
-            ),
             force=Parameter(
                 args=("-f", "--force"),
                 doc="""Replace an existing worktree even if it holds commits
@@ -195,7 +186,6 @@ try:
             branch,
             worktree_path,
             dataset=None,
-            no_create_branch=False,
             force=False,
             follow_parent=None,
             dry_run=False,
@@ -220,7 +210,6 @@ try:
                 superds_path=superds_path,
                 worktree_path=Path(worktree_path),
                 branch=branch,
-                create_branch=not no_create_branch,
                 discard_unmerged=force,
                 follow_parent=follow_parent is not None,
                 at_commit=(None if follow_parent in (None, "HEAD")
@@ -237,8 +226,6 @@ try:
 
                 if report.result in (
                     WorktreeResult.CREATED,
-                    WorktreeResult.CREATED_NEW_BRANCH,
-                    WorktreeResult.CREATED_RESET_BRANCH,
                     WorktreeResult.CONFIGURED,
                     WorktreeResult.MTIMES_SYNCED,
                 ):
@@ -265,8 +252,6 @@ try:
                     source=str(report.source),
                     dataset_path=report.dataset_path,
                     branch=report.branch,
-                    new_branch=report.result == WorktreeResult.CREATED_NEW_BRANCH,
-                    reset_branch=report.result == WorktreeResult.CREATED_RESET_BRANCH,
                     skip_reason=skip_reason,
                     dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
                     container_config=report.result == WorktreeResult.CONFIGURED,
@@ -405,8 +390,8 @@ try:
             # Delete by branch name
             datalad worktree-delete feature/x
 
-            # Also delete the branch
-            datalad worktree-delete --delete-branch feature/x
+            # Delete the worktrees but keep the branch
+            datalad worktree-delete --keep-branch feature/x
         """
 
         @staticmethod
@@ -467,16 +452,23 @@ try:
                 doc="Path to the superdataset (default: current directory)",
                 constraints=EnsureStr() | EnsureNone(),
             ),
-            delete_branch=Parameter(
-                args=("--delete-branch",),
-                doc="Also delete the branch (safe delete; refuses if unmerged)",
+            dry_run=Parameter(
+                args=("-n", "--dry-run"),
+                doc="Show what would be deleted, and what would be refused",
+                action="store_true",
+                default=False,
+            ),
+            keep_branch=Parameter(
+                args=("--keep-branch",),
+                doc="Keep the branch, and with it any commits the main "
+                    "checkout lacks. By default it is deleted too",
                 action="store_true",
                 default=False,
             ),
             force=Parameter(
                 args=("-f", "--force"),
-                doc="Force deletion even with uncommitted changes; "
-                    "force-delete branch",
+                doc="Delete despite commits the main checkout lacks, "
+                    "discarding them",
                 action="store_true",
                 default=False,
             ),
@@ -487,8 +479,9 @@ try:
         def __call__(
             target,
             dataset=None,
-            delete_branch=False,
+            keep_branch=False,
             force=False,
+            dry_run=False,
         ):
             from datalad.distribution.dataset import require_dataset
 
@@ -504,10 +497,12 @@ try:
             for report in delete_nested_worktrees(
                 superds_path=Path(ds.path),
                 target=target,
-                delete_branch=delete_branch,
+                delete_branch=not keep_branch,
                 force=force,
+                dry_run=dry_run,
             ):
-                if report.result == WorktreeResult.DELETED:
+                if report.result in (WorktreeResult.DELETED,
+                                     WorktreeResult.SKIPPED_DRY_RUN):
                     status = "ok"
                 elif report.result == WorktreeResult.DELETED_BRANCH:
                     status = "ok"
@@ -525,6 +520,7 @@ try:
                     dataset_path=report.dataset_path,
                     branch=report.branch,
                     branch_deleted=report.result == WorktreeResult.DELETED_BRANCH,
+                    dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
                     type="dataset",
                 )
 

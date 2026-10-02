@@ -14,6 +14,7 @@ from datalad.distribution.dataset import Dataset
 from datalad_worktree.add import create_nested_worktrees
 from datalad_worktree.core import WorktreeResult
 from datalad_worktree.mtimes import (
+    SNAKEMAKE_TIMESTAMP,
     copy_mtimes,
     dirty_paths,
     main_working_tree,
@@ -251,6 +252,41 @@ class TestCreateNestedWorktreesMtimes:
         assert os.lstat(worktree / "results").st_mtime_ns == \
             os.lstat(pipeline_ds["super"] / "results").st_mtime_ns
 
+    def test_snakemake_touch_survives_into_the_worktree(self, pipeline_ds: dict):
+        """
+        `snakemake --touch` on a directory() output carries into a worktree.
+
+        The reported case: `code/` was edited after `match_cells` ran, and
+        `--touch` marked its `by-cell/` output up to date again -- by stamping
+        the gitignored `.snakemake_timestamp` inside it, not the directory.
+        A fresh worktree without that file reran the job.
+        """
+        main = pipeline_ds["super"]
+        marker = main / "results" / SNAKEMAKE_TIMESTAMP
+        marker.touch()
+        _set_mtime(marker, OUTPUT_MTIME_NS)
+        # The directory's own mtime predates the code edit; --touch leaves it.
+        _set_mtime(main / "results", SCRIPT_MTIME_NS - 1)
+
+        def snakemake_mtime(directory: Path) -> int:
+            """The mtime Snakemake reads for a directory() output."""
+            marker = directory / SNAKEMAKE_TIMESTAMP
+            return os.stat(marker if marker.exists() else directory).st_mtime_ns
+
+        script_ns = os.lstat(main / "code" / "script.py").st_mtime_ns
+        assert snakemake_mtime(main / "results") > script_ns, "main must be up to date"
+        assert os.lstat(main / "results").st_mtime_ns < script_ns, (
+            "without the marker the directory must look stale, or this proves nothing"
+        )
+
+        worktree = _add(pipeline_ds, "wt", "feat/touched")
+
+        assert snakemake_mtime(worktree / "results") > \
+            os.lstat(worktree / "code" / "script.py").st_mtime_ns
+        # Creating the marker must not have disturbed the directory stamp.
+        assert os.lstat(worktree / "results").st_mtime_ns == \
+            os.lstat(main / "results").st_mtime_ns
+
     def test_cross_dataset_ordering_is_preserved(self, pipeline_ds: dict):
         """The whole point: the output must stay newer than the script."""
         worktree = _add(pipeline_ds, "wt", "feat/mtimes")
@@ -322,11 +358,8 @@ class TestSafety:
         worktree does not have.
         """
         superds = pipeline_ds["super"]
-        # The branch has to exist in *every* dataset, otherwise `add` reads it
-        # as a leftover from an earlier run: present in only some datasets and
-        # holding a commit the checkout lacks is refused, not checked out.
-        # See branches_to_reset() in add.py.
-        _git(pipeline_ds["code"], "branch", "variant")
+        # A worktree of another state comes from --follow-parent: an existing
+        # branch is otherwise reset to the checkout's HEAD.
         _git(superds, "checkout", "-q", "-b", "variant")
         _git(superds, "annex", "unlock", "out.txt")
         (superds / "out.txt").write_text("a different result\n")
@@ -334,7 +367,8 @@ class TestSafety:
         _git(superds, "checkout", "-q", "master")
         _set_mtime(superds / "out.txt", OUTPUT_MTIME_NS)
 
-        worktree = _add(pipeline_ds, "wt", "variant")
+        worktree = _add(pipeline_ds, "wt", "wt-variant",
+                        follow_parent=True, at_commit="variant")
 
         assert os.lstat(worktree / "out.txt").st_mtime_ns != OUTPUT_MTIME_NS
         # ...while everything that did not diverge is still carried over.

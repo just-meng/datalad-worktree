@@ -34,8 +34,7 @@ def _all_ok(reports: list[WorktreeReport]) -> bool:
 def _succeeded(reports: list[WorktreeReport]) -> list[WorktreeReport]:
     return [
         r for r in reports
-        if r.result in (WorktreeResult.CREATED, WorktreeResult.CREATED_NEW_BRANCH,
-                        WorktreeResult.CREATED_RESET_BRANCH)
+        if r.result == WorktreeResult.CREATED
     ]
 
 
@@ -95,24 +94,19 @@ class TestGitWorktreeAdd:
     def test_create_new_branch(self, datalad_ds: Path, tmp_path: Path):
         dest = tmp_path / "wt"
         result, msg = _git_worktree_add(datalad_ds, dest, "new-branch")
-        assert result == WorktreeResult.CREATED_NEW_BRANCH
+        assert result == WorktreeResult.CREATED
         assert dest.exists()
         assert (dest / ".git").exists()
 
-    def test_checkout_existing_branch(self, datalad_ds: Path, tmp_path: Path):
+    def test_reset_existing_branch(self, datalad_ds: Path, tmp_path: Path):
         _git(datalad_ds, "branch", "existing-branch")
         dest = tmp_path / "wt"
+        _commit_in(datalad_ds, "moved-on.txt")   # leaves the branch behind
         result, msg = _git_worktree_add(datalad_ds, dest, "existing-branch")
         assert result == WorktreeResult.CREATED
+        assert _head(dest) == _head(datalad_ds)
         assert dest.exists()
 
-    def test_no_create_branch_fails(self, datalad_ds: Path, tmp_path: Path):
-        dest = tmp_path / "wt"
-        result, msg = _git_worktree_add(
-            datalad_ds, dest, "nonexistent", create_branch=False
-        )
-        assert result == WorktreeResult.FAILED
-        assert "--no-create-branch" in msg
 
 
 class TestCreateNestedWorktrees:
@@ -126,6 +120,23 @@ class TestCreateNestedWorktrees:
         assert _all_ok(reports)
         assert all(r.result == WorktreeResult.SKIPPED_DRY_RUN for r in reports)
         assert not (superds["wt_location"] / "test-wt").exists()
+
+    def test_dry_run_reports_what_the_real_run_refuses(self, superds: dict):
+        """-n runs the pre-flight: it must not promise a worktree that `add` refuses."""
+        _git(superds["sub02"], "worktree", "add", "-q", "-b", "taken",
+             str(superds["wt_location"] / "elsewhere"))
+
+        reports = _run_create(
+            superds_path=superds["super"],
+            worktree_path=superds["wt_location"] / "test-wt",
+            branch="taken",
+            dry_run=True,
+        )
+
+        failed = _failed(reports)
+        assert [r.dataset_path for r in failed] == ["sub-02"]
+        assert "already checked out" in failed[0].message
+        assert not [r for r in reports if r.result == WorktreeResult.SKIPPED_DRY_RUN]
 
     def test_creates_all_worktrees(self, superds: dict):
         reports = _run_create(
@@ -171,16 +182,6 @@ class TestCreateNestedWorktrees:
         failed = _failed(reports)
         assert failed[0].result == WorktreeResult.FAILED
         assert "already exists" in failed[0].message
-
-    def test_no_create_branch(self, superds: dict):
-        reports = _run_create(
-            superds_path=superds["super"],
-            worktree_path=superds["wt_location"] / "test-wt",
-            branch="nonexistent/branch",
-            create_branch=False,
-        )
-        assert not _all_ok(reports)
-        assert "--no-create-branch" in _failed(reports)[0].message
 
     def test_not_a_repo_raises(self, tmp_path: Path):
         with pytest.raises(ValueError, match="Not a git repository"):
@@ -347,6 +348,60 @@ class TestReplacingWorktrees:
         # the worktree and its commit survive untouched
         assert _head(worktree) == unmerged
 
+    def test_a_later_refusal_leaves_the_old_worktree_in_place(
+        self, superds: dict,
+    ):
+        """All-or-nothing: no check may run after the old worktree is gone."""
+        worktree = superds["wt_location"] / "wt"
+        _run_create(superds_path=superds["super"], worktree_path=worktree,
+                    branch="runs")
+        before = _head(worktree)
+
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="runs",
+                              follow_parent=True, at_commit="deadbeef")
+
+        assert any("cannot resolve commit" in r.message for r in _failed(reports))
+        assert _head(worktree) == before
+        assert _branch_of(worktree) == "runs"
+
+    def test_a_branch_checked_out_elsewhere_leaves_it_in_place(
+        self, superds: dict,
+    ):
+        worktree = superds["wt_location"] / "wt"
+        elsewhere = superds["wt_location"] / "elsewhere"
+        _run_create(superds_path=superds["super"], worktree_path=worktree,
+                    branch="runs")
+        _run_create(superds_path=superds["super"], worktree_path=elsewhere,
+                    branch="other")
+
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="other")
+
+        assert any("already checked out" in r.message for r in _failed(reports))
+        assert _branch_of(worktree) == "runs"
+
+    def test_a_failure_after_the_checks_rolls_back(self, superds: dict):
+        """
+        No pre-flight can foresee every git failure. One that slips through
+        stops the run and removes what it created: no half hierarchy.
+        """
+        # A stale ref lock: a real git failure the pre-flight does not check.
+        git_dir = Path(_git(superds["sub02"], "rev-parse", "--absolute-git-dir")
+                       .stdout.strip())
+        (git_dir / "refs" / "heads" / "runs.lock").write_text("")
+        worktree = superds["wt_location"] / "wt"
+
+        reports = _run_create(superds_path=superds["super"],
+                              worktree_path=worktree, branch="runs")
+
+        assert [r.dataset_path for r in _failed(reports)] == ["sub-02"]
+        assert not worktree.exists()
+        for repo in (superds["super"], superds["sub01"], superds["sub01_deriv"]):
+            listed = _git(repo, "worktree", "list", "--porcelain").stdout
+            assert str(worktree) not in listed, repo
+            assert not _git(repo, "branch", "--list", "runs").stdout.strip(), repo
+
     def test_force_discards_it(self, superds: dict):
         worktree = superds["wt_location"] / "wt"
         _run_create(superds_path=superds["super"], worktree_path=worktree,
@@ -425,16 +480,14 @@ def _branch_of(repo: Path) -> str:
     return _git(repo, "branch", "--show-current").stdout.strip()
 
 
-class TestLeftoverBranches:
+class TestExistingBranches:
     """
-    A branch already present in *some* datasets is a leftover, not a state.
+    An existing branch always starts from the checkout's HEAD.
 
-    `worktree delete` keeps branches by default, so the next `add` on the same
-    name used to check them out -- silently resurrecting the previous run's
-    code and outputs in those datasets while the others started fresh. A
-    branch present in *every* dataset is different: the superdataset commit
-    names the subdataset commits that belong with it, so that is a recorded
-    state somebody may want back, and it is left alone.
+    Checking it out where it sat resurrected an earlier run's code and outputs
+    -- in some datasets only, when the branch was a leftover there, or in all
+    of them, which contradicted a new worktree being a fresh start. Resuming
+    a kept branch is explicit: --follow-parent <branch>, under a new name.
     """
 
     def _leftover_in_sub02(self, superds: dict, *, ahead: bool) -> Path:
@@ -459,20 +512,16 @@ class TestLeftoverBranches:
         )
 
         assert _all_ok(reports)
-        reset = [r for r in reports
-                 if r.result == WorktreeResult.CREATED_RESET_BRANCH]
-        assert [r.dataset_path for r in reset] == ["sub-02"]
         # the whole point: the worktree starts where the checkout is now
         assert _head(worktree / "sub-02") == _head(sub02)
         assert (worktree / "sub-02" / "moved-on.txt").exists()
 
-    def test_branch_in_every_dataset_is_checked_out_as_is(self, superds: dict):
-        """A state recorded across the hierarchy is not a leftover."""
+    def test_branch_in_every_dataset_starts_fresh_too(self, superds: dict):
+        """Present everywhere is no exception: the worktree starts from HEAD."""
         datasets = [superds["super"], superds["sub01"],
                     superds["sub01_deriv"], superds["sub02"]]
         for ds in datasets:
             _git(ds, "branch", "runs")
-        recorded = _head(superds["super"])
         _commit_in(superds["super"], "later-work.txt")   # main moves on
         worktree = superds["wt_location"] / "wt"
 
@@ -481,10 +530,26 @@ class TestLeftoverBranches:
         )
 
         assert _all_ok(reports)
-        assert not [r for r in reports
-                    if r.result == WorktreeResult.CREATED_RESET_BRANCH]
+        for ds in datasets:
+            assert _head(worktree / ds.relative_to(superds["super"])) == _head(ds)
+        assert (worktree / "later-work.txt").exists()
+
+    def test_a_kept_branch_resumes_under_a_new_name(self, superds: dict):
+        """--follow-parent <branch> is how an earlier run's state comes back."""
+        _git(superds["super"], "checkout", "-q", "-b", "runs")
+        _commit_in(superds["super"], "run-output.txt")
+        recorded = _head(superds["super"])
+        _git(superds["super"], "checkout", "-q", "-")
+        worktree = superds["wt_location"] / "wt"
+
+        reports = _run_create(
+            superds_path=superds["super"], worktree_path=worktree, branch="runs2",
+            follow_parent=True, at_commit="runs",
+        )
+
+        assert _all_ok(reports)
         assert _head(worktree) == recorded
-        assert not (worktree / "later-work.txt").exists()
+        assert (worktree / "run-output.txt").exists()
 
     def test_refuses_when_the_leftover_holds_unfetched_commits(self, superds: dict):
         """A finished run whose results were never fetched is not discarded."""
@@ -510,36 +575,8 @@ class TestLeftoverBranches:
         )
 
         assert _all_ok(reports)
-        assert any(r.result == WorktreeResult.CREATED_RESET_BRANCH
-                   and r.dataset_path == "sub-02" for r in reports)
+        assert _head(worktree / "sub-02") == _head(superds["sub02"])
         assert not (worktree / "sub-02" / "unfetched-result.txt").exists()
-
-    def test_dry_run_says_the_branch_would_be_reset(self, superds: dict):
-        self._leftover_in_sub02(superds, ahead=False)
-        worktree = superds["wt_location"] / "wt"
-
-        reports = _run_create(
-            superds_path=superds["super"], worktree_path=worktree, branch="runs",
-            dry_run=True,
-        )
-
-        noted = [r for r in reports if "reset" in (r.message or "")]
-        assert [r.dataset_path for r in noted] == ["sub-02"]
-        assert not worktree.exists()
-
-    def test_no_create_branch_never_resets(self, superds: dict):
-        """--no-create-branch asks for the branch as it stands."""
-        self._leftover_in_sub02(superds, ahead=False)
-        worktree = superds["wt_location"] / "wt"
-
-        reports = _run_create(
-            superds_path=superds["super"], worktree_path=worktree, branch="runs",
-            create_branch=False,
-        )
-
-        assert not [r for r in reports
-                    if r.result == WorktreeResult.CREATED_RESET_BRANCH]
-        assert any("no-create-branch" in (r.message or "") for r in _failed(reports))
 
 
 # ── --follow-parent: the state the parent records, not the branch name ───────

@@ -553,7 +553,7 @@ class TestRefreshingAWorktree:
         _touch(wt / OUTPUT_FILE)
         monkeypatch.chdir(wt)
 
-        exit_code = main_cli(["--no-color", "fetch"])
+        exit_code = main_cli(["fetch"])
 
         assert exit_code == 0
         assert "mtimes" in capsys.readouterr().out
@@ -564,7 +564,7 @@ class TestRefreshingAWorktree:
     ):
         monkeypatch.chdir(shipping_ds["main"])
 
-        exit_code = main_cli(["--no-color", "fetch"])
+        exit_code = main_cli(["fetch"])
 
         assert exit_code == 1
         assert "not a linked worktree" in capsys.readouterr().err
@@ -572,7 +572,7 @@ class TestRefreshingAWorktree:
     def test_cli_reports_a_non_repo(self, tmp_path: Path, capsys, monkeypatch):
         monkeypatch.chdir(tmp_path)
 
-        exit_code = main_cli(["--no-color", "fetch", str(tmp_path)])
+        exit_code = main_cli(["fetch", str(tmp_path)])
 
         assert exit_code == 1
         assert "Not a git repository" in capsys.readouterr().err
@@ -599,7 +599,7 @@ class TestFetchCLI:
         _run_in_worktree(shipping_ds, identical=False)
         monkeypatch.chdir(shipping_ds["main"])
 
-        exit_code = main_cli(["--no-color", "fetch", "runs"])
+        exit_code = main_cli(["fetch", "runs"])
 
         assert exit_code == 0
         out = capsys.readouterr().out
@@ -612,7 +612,7 @@ class TestFetchCLI:
         _rewrite(shipping_ds["main"] / OUTPUT_FILE, b"hand-edited")
         monkeypatch.chdir(shipping_ds["main"])
 
-        exit_code = main_cli(["--no-color", "fetch", "runs"])
+        exit_code = main_cli(["fetch", "runs"])
 
         assert exit_code == 1
         assert "would overwrite uncommitted changes" in capsys.readouterr().err

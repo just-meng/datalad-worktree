@@ -1,82 +1,74 @@
 # CLI reference
 
-Three equivalent entry points:
-
 ```bash
 worktree add runs /tmp/worktrees/runs           # standalone CLI
-datalad worktree-add runs /tmp/worktrees/runs   # DataLad extension
+datalad worktree-add runs /tmp/worktrees/runs   # DataLad extension, same arguments
 python -m datalad_worktree add runs /tmp/worktrees/runs
 ```
 
-All commands run from the superdataset root, or take `-d <path>` to name it. Output is colored when stdout is a TTY; `--no-color` disables it.
-
-See [design.md](design.md) for why each command behaves the way it does.
+Commands run from the superdataset root, or take `-d <path>` to name it.
 
 ## `worktree add`
 
 ```
 worktree add <branch> <worktree-path> [options]
 
-  <branch>                  branch to create or checkout in every worktree
+  <branch>                  branch to check out in every worktree
   <worktree-path>           path for the superdataset worktree
 
-  -n, --dry-run             show what would be done without doing it
+  -n, --dry-run             show what would be done, refusals included
   -f, --force               replace an existing worktree even if it holds
                             commits the main checkout lacks, discarding them
   --follow-parent [<commit>]
-                            take each subdataset's state from the commit its
-                            parent records, not from the branch name; with a
-                            commit, mirror the whole state it recorded
-  --no-create-branch        only checkout existing branches, don't create new ones
+                            check each subdataset out at the commit its parent
+                            records; with a commit or tag, the superdataset too
   --no-bindpaths            don't configure container bind mounts
-  --no-mtimes               don't copy file mtimes from the source working trees
+  --no-mtimes               don't copy mtimes (Snakemake markers included)
+                            from the main checkout
   -d, --dataset <path>      superdataset root (default: current directory)
 ```
 
-Creates a worktree for the superdataset and every installed subdataset, on `branch`. Subdatasets that are not installed are skipped.
-
-Where the branch does not exist it is created from that dataset's current HEAD. Where it exists, what happens depends on whether it exists *everywhere*:
-
-- **In only some datasets** — a leftover, since `worktree delete` keeps branches by default. It is reset to that dataset's current HEAD, reported as `(leftover branch reset)`, so the worktree is a fresh start rather than a hybrid of the last run and the present. Refused instead, changing nothing, if that branch holds commits its checkout lacks — a finished run whose results were never fetched, or a branch you created in one dataset on purpose. Then either `worktree fetch` it first, give the branch to every dataset, or `-f` to reset it and discard those commits.
-- **In every dataset** — a state the hierarchy once recorded, since the superdataset commit names the subdataset commits belonging with it. Checked out as it stands, reported as `(existing branch)`.
-
-So each line says which happened: `(new branch)`, `(existing branch)`, or `(leftover branch reset)`.
-
-`--no-create-branch` asks for the branch as it stands, so it never resets and fails on datasets that lack it.
-
-### `--follow-parent`: one recorded state instead of one branch name
-
-By default each dataset resolves `branch` for itself, so a subdataset ends up at *its* branch tip — which is not necessarily the commit the superdataset records for it. `--follow-parent` takes each subdataset's state from what its parent records instead, so the worktrees reproduce one consistent state of the hierarchy:
+Creates a worktree for the superdataset and every installed subdataset, all on `branch`.
 
 ```bash
-worktree add runs /tmp/wt --follow-parent            # follow the superdataset as it is now
-worktree add rerun /tmp/wt --follow-parent 4f2a91c   # mirror the project as that commit recorded it
+worktree add runs /tmp/worktrees/runs      # replaces the worktree if one is already there
+worktree add -f runs /tmp/worktrees/runs   # ... even if it holds commits never fetched
 ```
 
-With a commit — a `datalad run` record, say — the commit also defines the *set* of datasets: one added since is absent, and one recorded then is included even if the checkout has moved on. `branch` is still created in every dataset, at the resolved commit, so the snapshot is something you can work and commit in.
+### Existing branches & worktrees
 
-It refuses, creating nothing, if the commit cannot be resolved, or if a recorded commit is not an object the subdataset actually has — the realistic case being that it was never fetched there. Without that check git fails partway, after the superdataset worktree already exists. A dataset the commit records but the checkout does not have is reported as not installed and skipped.
+`branch` always starts at each dataset's HEAD. It is created where it is missing, and reset where it exists. A worktree already at `<worktree-path>` is deleted, branch included, and created afresh. Uncommitted changes in it are discarded. 
 
-All-or-nothing: a pre-flight check runs first, and if any dataset would fail (branch already checked out elsewhere, destination path occupied) nothing is created. A subdataset that fails during creation does not abort the rest; a superdataset failure does.
+#### Pre-flight
 
-Two steps run at the end, over all the worktrees at once: container bind-mount configuration and mtime copying. Skip them with `--no-bindpaths` / `--no-mtimes`.
+Before changing anything, `add` checks every dataset. If any check fails, it refuses and touches nothing, not even an existing worktree. It refuses when:
 
-Only the **superdataset's** containers are configured. A container registered in a subdataset is left alone, so invoking one of those from the superdataset needs its bind paths set up by hand.
+- an existing worktree or branch holds commits the main checkout lacks, unless `-f`;
+- a directory at `<worktree-path>` is not one git knows as a worktree;
+- `branch` is checked out in a worktree at another path;
+- with `--follow-parent`, the commit can't be resolved, or a subdataset lacks the commit recorded for it.
+
+Only once every check has passed is an existing worktree deleted and the new ones created. If git still fails partway, for a reason no check can foresee (a stale lock, a full disk), `add` stops and deletes the worktrees it created. A replaced worktree stays deleted: it held nothing the main checkout lacks, or `-f` said to discard it.
+
+#### Dry run
+
+`-n` runs the pre-flight and stops, changing nothing. It reports the refusals, or what the real run would do: the worktree it would replace, and for each dataset where its worktree would go and whether `branch` would be new or reset.
+
+### `--follow-parent`
+
+By default each dataset checks out `branch` on its own, so a subdataset lands on its own branch tip. That may not be the commit the superdataset records for it. `--follow-parent` checks each subdataset out at the commit its parent records instead. All subdatasets and only those recorded by the target commit are created in the worktrees.
 
 ```bash
-worktree add experiment /tmp/wt
-worktree add -n experiment /tmp/wt                  # dry run
-worktree add --no-create-branch v1.0 /tmp/wt        # refuse unless the branch exists
-worktree add runs /tmp/worktrees/runs               # replaces an existing worktree
-worktree add -f runs /tmp/worktrees/runs            # ... even if it holds unfetched work
+worktree add runs /tmp/wt --follow-parent           # as the superdataset records it now
+worktree add rerun /tmp/wt --follow-parent v1.0     # as commit or tag v1.0 recorded it
 ```
 
-A worktree already at the destination is **replaced by default** (issue #28). Worktrees are ephemeral, and one that is merged or behind holds nothing worth keeping but stale mtimes, so refusing only made you type a flag. Replacement deletes the branch too, so the new worktree starts from the main checkout's current state rather than inheriting the old branch's commits — equivalent to a brand new one.
+### Containers and mtimes
 
-Two things still refuse, and `-f` lifts only the first:
+The last two steps run over all the worktrees at once:
 
-- the worktree holds commits the main checkout lacks — a run whose results were never fetched. `worktree fetch` it first, or `-f` to discard them.
-- the destination is a directory git does not report as a worktree. That is never deleted, flag or no flag; you get "worktree root already exists".
+- **Container bind mounts** are configured for containers registered in the superdataset. Containers registered in a subdataset are not configured. `--no-bindpaths` skips this step.
+- **mtimes are copied from the main checkout,** Snakemake's `.snakemake_timestamp` markers included. `--no-mtimes` skips this step.
 
 ## `worktree fetch`
 
@@ -84,64 +76,72 @@ Two things still refuse, and `-f` lifts only the first:
 worktree fetch [target] [options]
 
   [target]                  worktree path or branch name to fetch from
-                            (default: the working tree this worktree came from)
+                            (default: the checkout this worktree came from)
 
-  -n, --dry-run             show what would be done without doing it
-  --no-mtimes               don't refresh mtimes from the source afterwards
+  -n, --dry-run             show what would be merged, refusals included
+  --no-mtimes               don't copy mtimes (Snakemake markers included)
+                            from the target
   -d, --dataset <path>      checkout to fetch into (default: current directory)
 ```
 
-Brings `target`'s commits into the checkout you are standing in, then refreshes mtimes *from* `target`. `target` is a worktree path or a branch name, resolved the same way `worktree delete` resolves its target.
-
-Data always lands in the tree you are standing in, so direction follows from where you run it:
+Brings `target`'s commits into the checkout you are standing in, then copies mtimes from `target`.
 
 ```bash
 cd /data/my-project
-worktree fetch runs        # ship a finished run's results home
+worktree fetch runs        # results home
 
 cd /tmp/worktrees/runs
-worktree fetch             # the other way: bring new code and inputs in
+worktree fetch             # new code and inputs in
 ```
 
-Unrelated uncommitted work does not block it: only paths the fetch would actually overwrite are refused, and they are named. A dataset the worktree merely consumed (your `code/` subdataset, say) is strictly behind, which is "nothing to ship" rather than a conflict, and is skipped.
+- No `target` from a main checkout is an error.
+- How commits come in:
+  - Where your side has no commits of its own, the fetch fast-forwards.
+  - Where both sides have commits, it merges (git >= 2.38; older git refuses).
+  - Where the merge would conflict, it refuses and names the paths. The usual case is both sides having moved the same subdataset.
+- Uncommitted changes block it only where the fetch would overwrite them, and those paths are named.
+- A dataset the worktree never changed is skipped.
+- A detached HEAD in any of the worktree's datasets refuses the whole fetch.
 
 ## `worktree delete`
 
 ```
 worktree delete <target> [options]
 
-  <target>                  worktree path or branch name to delete
+  <target>                  worktree path or branch name
 
-  --delete-branch           also delete the branch (safe delete; refuses if unmerged)
-  -f, --force               force deletion even with uncommitted changes;
-                            force-delete the branch
-  -y, --yes                 skip the confirmation prompt
+  -n, --dry-run             show what would be deleted, refusals included
+  --keep-branch             keep the branch, and with it any commits the
+                            main checkout lacks
+  -f, --force               delete despite commits the main checkout
+                            lacks, discarding them
   -d, --dataset <path>      superdataset root (default: current directory)
 ```
 
-Deletes deepest-first, so children go before parents. Previews the directories and asks for confirmation unless `-y`. The main working tree is never a target, by path or by branch — it is reported as "not a worktree" and nothing changes.
+Deletes the worktree in every dataset, deepest first. It does not ask for confirmation, so use `-n` to preview.
 
-```bash
-worktree delete my-feature
-worktree delete /tmp/wt
-worktree delete --yes my-feature
-worktree delete --delete-branch my-feature
-worktree delete --force --delete-branch my-feature
-```
+- The branch is deleted too, unless `--keep-branch`. Uncommitted changes are discarded, as `add` discards them.
+- Before deleting anything, `delete` checks every worktree. Unless `-f`, it refuses and deletes nothing if any worktree has commits the main checkout lacks. With `--keep-branch` these are kept on the branch, so only a worktree with a detached HEAD is refused for them.
+- `-n` runs the same checks and stops, so it never promises a deletion the real run refuses.
+- The main working tree is never deleted.
 
 ## `worktree list`
 
 ```
 worktree list [options]
+
+  -d, --dataset <path>      superdataset root (default: current directory)
 ```
 
-Also the default when no subcommand is given (`worktree` alone). Shows only datasets with worktrees beyond the main one, grouped by the hierarchy each belongs to:
+`worktree` with no subcommand runs `list`, in the standalone CLI only. The listing shows datasets that have worktrees beyond the main checkout, grouped by the hierarchy each belongs to, with the main checkout's group first:
 
 ```
+master
+  .           /mnt/Data/et_psychedelics/processed/2p
 runs
   .           /mnt/Data/worktrees/2p-runs
   code        /mnt/Data/worktrees/2p-runs/code (detached)
   inputs/raw  /mnt/Data/worktrees/2p-runs/inputs/raw
 ```
 
-Every dataset is pruned first, so a worktree directory removed some other way (`rm -rf` instead of `worktree delete`) drops out of the listing instead of lingering as a stale entry.
+A worktree directory deleted by other means (`rm -rf`) is pruned first, so it doesn't appear.
