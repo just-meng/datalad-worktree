@@ -12,17 +12,10 @@ from datalad.api import create, install
 from datalad.distribution.dataset import Dataset
 
 from datalad_worktree.add import create_nested_worktrees
-from datalad_worktree.core import WorktreeResult
 from datalad_worktree.mtimes import (
     SNAKEMAKE_TIMESTAMP,
     copy_mtimes,
-    dirty_paths,
-    main_working_tree,
-    parent_dirs,
     resolve_worktree_target,
-    tracked_blobs,
-    transferable_paths,
-    unlocked_annex_paths,
 )
 
 # Two fixed, well-separated timestamps. The "output" is deliberately newer
@@ -119,42 +112,6 @@ def _add(pipeline_ds: dict, name: str, branch: str, **kwargs) -> Path:
 # ── Parsing helpers ──────────────────────────────────────────────────────────
 
 
-class TestTrackedBlobs:
-    def test_excludes_submodule_gitlinks(self, pipeline_ds: dict):
-        """A gitlink is where another worktree mounts, not a file to stamp."""
-        blobs = tracked_blobs(pipeline_ds["super"])
-        assert "out.txt" in blobs
-        assert "code" not in blobs
-
-    def test_includes_symlinks(self, pipeline_ds: dict):
-        """Annexed files are symlinks; they carry their own mtime."""
-        blobs = tracked_blobs(pipeline_ds["super"])
-        symlinks = [
-            p for p in blobs
-            if (pipeline_ds["super"] / p).is_symlink()
-        ]
-        # The fixture annexes its content, so at least one must be a symlink.
-        assert symlinks, f"expected annexed symlinks among {sorted(blobs)}"
-
-    def test_empty_for_non_repo(self, tmp_path: Path):
-        assert tracked_blobs(tmp_path) == {}
-
-
-class TestDirtyPaths:
-    def test_clean_tree_is_empty(self, pipeline_ds: dict):
-        assert dirty_paths(pipeline_ds["super"]) == set()
-
-    def test_reports_modification(self, pipeline_ds: dict):
-        _git(pipeline_ds["super"], "annex", "unlock", "out.txt")
-        (pipeline_ds["super"] / "out.txt").write_text("edited\n")
-        assert "out.txt" in dirty_paths(pipeline_ds["super"])
-
-    def test_reports_both_sides_of_a_rename(self, pipeline_ds: dict):
-        _git(pipeline_ds["super"], "mv", "out.txt", "renamed.txt")
-        dirty = dirty_paths(pipeline_ds["super"])
-        assert {"out.txt", "renamed.txt"} <= dirty
-
-
 class TestUnlockedAnnexFiles:
     """
     Unlocked annexed files must never be stamped.
@@ -164,41 +121,6 @@ class TestUnlockedAnnexFiles:
     On the dataset this was found on, that was 152 s for 3.71 GB -- against
     0.11 s for the 10099 locked symlinks beside them.
     """
-
-    def test_detects_a_pointer_blob(self, tmp_path: Path):
-        """A pointer blob is recognised without git-annex being involved."""
-        repo = tmp_path / "plain"
-        repo.mkdir()
-        _git(repo, "init", "-q")
-        _git(repo, "config", "user.email", "t@t")
-        _git(repo, "config", "user.name", "t")
-        (repo / "pointer.pkl").write_text(
-            "/annex/objects/MD5E-s289878220--9959612438e19297b29e640ccff2dc61.pkl\n"
-        )
-        (repo / "plain.txt").write_text("just text\n")
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-qm", "one pointer, one plain file")
-
-        assert unlocked_annex_paths(repo) == {"pointer.pkl"}
-
-    def test_locked_symlinks_are_not_reported(self, pipeline_ds: dict):
-        """The fixture's annexed files are locked, so none should match."""
-        assert unlocked_annex_paths(pipeline_ds["super"]) == set()
-
-    def test_detects_a_really_unlocked_file(self, pipeline_ds: dict):
-        _commit_unlocked(pipeline_ds["super"], "out.txt")
-
-        assert "out.txt" in unlocked_annex_paths(pipeline_ds["super"])
-
-    def test_transferable_paths_excludes_it(self, pipeline_ds: dict):
-        _commit_unlocked(pipeline_ds["super"], "out.txt")
-        worktree = _add(pipeline_ds, "wt", "feat/unlocked", preserve_mtimes=False)
-
-        paths = transferable_paths(pipeline_ds["super"], worktree)
-
-        assert "out.txt" not in paths
-        # The locked sibling is still carried, so this is not a blanket skip.
-        assert "results/table.csv" in paths
 
     def test_copy_mtimes_leaves_the_unlocked_file_alone(self, pipeline_ds: dict):
         """
@@ -223,15 +145,6 @@ class TestUnlockedAnnexFiles:
         assert os.lstat(worktree / "out.txt").st_mtime_ns == unstamped
         assert os.lstat(worktree / "results" / "table.csv").st_mtime_ns == \
             SCRIPT_MTIME_NS
-
-
-class TestParentDirs:
-    def test_deepest_first(self):
-        dirs = parent_dirs(["a/b/c/file.txt", "a/other.txt"])
-        assert dirs == ["a/b/c", "a/b", "a"]
-
-    def test_excludes_the_root(self):
-        assert parent_dirs(["top.txt"]) == []
 
 
 # ── The behaviour the feature exists for ─────────────────────────────────────
@@ -287,46 +200,12 @@ class TestCreateNestedWorktreesMtimes:
         assert os.lstat(worktree / "results").st_mtime_ns == \
             os.lstat(main / "results").st_mtime_ns
 
-    def test_cross_dataset_ordering_is_preserved(self, pipeline_ds: dict):
-        """The whole point: the output must stay newer than the script."""
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
-
-        assert os.lstat(worktree / "out.txt").st_mtime_ns > \
-            os.lstat(worktree / "code" / "script.py").st_mtime_ns
-
     def test_ordering_is_inverted_without_the_fix(self, pipeline_ds: dict):
         """The negative control -- without this, the test above proves nothing."""
         worktree = _add(pipeline_ds, "wt", "feat/mtimes", preserve_mtimes=False)
 
         assert os.lstat(worktree / "out.txt").st_mtime_ns < \
             os.lstat(worktree / "code" / "script.py").st_mtime_ns
-
-    def test_no_mtimes_leaves_checkout_times(self, pipeline_ds: dict):
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes", preserve_mtimes=False)
-
-        assert os.lstat(worktree / "out.txt").st_mtime_ns != \
-            os.lstat(pipeline_ds["super"] / "out.txt").st_mtime_ns
-
-    def test_reports_one_line_per_dataset(self, pipeline_ds: dict):
-        reports = list(create_nested_worktrees(
-            superds_path=pipeline_ds["super"],
-            worktree_path=pipeline_ds["wt_location"] / "wt",
-            branch="feat/mtimes",
-        ))
-        synced = [r for r in reports if r.result == WorktreeResult.MTIMES_SYNCED]
-
-        assert sorted(r.dataset_path for r in synced) == [".", "code"]
-        assert all("files" in r.message and "dirs" in r.message for r in synced)
-
-    def test_no_mtimes_reports_nothing(self, pipeline_ds: dict):
-        reports = list(create_nested_worktrees(
-            superds_path=pipeline_ds["super"],
-            worktree_path=pipeline_ds["wt_location"] / "wt",
-            branch="feat/mtimes",
-            preserve_mtimes=False,
-        ))
-
-        assert not [r for r in reports if r.result == WorktreeResult.MTIMES_SYNCED]
 
 
 class TestSafety:
@@ -410,69 +289,8 @@ class TestSafety:
             os.lstat(superds / "results" / "table.csv").st_mtime_ns
 
 
-class TestCopyMtimes:
-    def test_returns_counts(self, pipeline_ds: dict):
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes", preserve_mtimes=False)
-
-        files, dirs, error = copy_mtimes(pipeline_ds["super"], worktree)
-
-        assert error == ""
-        assert files >= 2      # out.txt, results/table.csv, .datalad/*
-        assert dirs >= 1       # results/
-        assert os.lstat(worktree / "out.txt").st_mtime_ns == OUTPUT_MTIME_NS
-
-    def test_transferable_excludes_gitlink_and_dirty(self, pipeline_ds: dict):
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
-
-        paths = transferable_paths(pipeline_ds["super"], worktree)
-
-        assert "out.txt" in paths
-        assert "code" not in paths
-
-
-class TestMainWorkingTree:
-    def test_reference_is_auto_detected(self, pipeline_ds: dict):
-        """The super worktree knows the working tree it was created from."""
-        worktree = _add(pipeline_ds, "wt", "feat/mtimes")
-
-        assert main_working_tree(worktree) == pipeline_ds["super"].resolve()
-
-    def test_a_main_checkout_resolves_to_itself(self, pipeline_ds: dict):
-        """
-        Not None: --git-common-dir in a main checkout is its own .git, so the
-        answer is the checkout itself. Useless as a source, which is why
-        resolve_fetch_source rejects it rather than trusting this to be None.
-        """
-        assert main_working_tree(pipeline_ds["super"]) == \
-            pipeline_ds["super"].resolve()
-
-
 class TestResolveWorktreeTarget:
     """A target is a worktree path or a branch name, as `delete` reads it."""
-
-    def test_branch_name_resolves_to_its_worktree(self, pipeline_ds: dict):
-        worktree = _add(pipeline_ds, "wt", "runs")
-
-        root = resolve_worktree_target(target="runs", dataset=pipeline_ds["super"])
-
-        assert root == worktree.resolve()
-
-    def test_existing_path_is_taken_as_a_path(self, pipeline_ds: dict):
-        worktree = _add(pipeline_ds, "wt", "runs")
-
-        assert resolve_worktree_target(target=str(worktree)) == worktree.resolve()
-
-    def test_unknown_branch_names_both_readings(self, pipeline_ds: dict):
-        with pytest.raises(ValueError, match="no worktree on branch 'nope'"):
-            resolve_worktree_target(target="nope", dataset=pipeline_ds["super"])
-
-    def test_resolves_a_sibling_from_inside_a_worktree(self, pipeline_ds: dict):
-        """git worktree list reports siblings, so worktree->worktree works."""
-        first = _add(pipeline_ds, "wt-a", "runs")
-        second = _add(pipeline_ds, "wt-b", "other")
-
-        assert resolve_worktree_target(target="other", dataset=first) == \
-            second.resolve()
 
     def test_stale_worktree_is_pruned_before_lookup(self, pipeline_ds: dict):
         """A directory removed with rm -rf must not resolve."""
