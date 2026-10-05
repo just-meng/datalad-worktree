@@ -2,7 +2,7 @@
 
 User-facing changes per release. Behaviour is documented in [docs/cli.md](docs/cli.md).
 
-## Unreleased
+## 0.4.0 (2026-10-05)
 
 ### Breaking
 
