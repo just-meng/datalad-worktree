@@ -9,6 +9,7 @@ Guidance for coding agents working on this repository. This file holds rules and
 | **Why**, across commands: the premise, containers, mtimes | [docs/design.md](docs/design.md) |
 | **Why** a command or module is shaped the way it is, with the evidence | its module and function docstrings |
 | Setup, test and lint commands, jj hooks | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| What changed in each release | [CHANGELOG.md](CHANGELOG.md) |
 
 ## Before changing behaviour
 
