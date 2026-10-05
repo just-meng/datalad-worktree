@@ -20,20 +20,24 @@ from datalad_worktree.core import WorktreeReport, WorktreeResult
 
 
 class _Colors:
-    # Green for what changed the worktree tree itself (create, delete),
-    # cyan for the bookkeeping steps that follow (config, mtimes), yellow
-    # for skips. None of them are bold: "1;" is the bold attribute, and
-    # emphasising a skip over a creation gets the hierarchy backwards.
+    # Pastel 256-colour tones at matching brightness, so no label
+    # outweighs another. Green for what adds to the worktree tree
+    # (create, fetch), pink for what removes from it (delete), so a
+    # replace reads as teardown then rebuild at a glance. Cyan for the
+    # bookkeeping steps that follow (config, mtimes), yellow for skips.
+    # None of them are bold: "1;" is the bold attribute, and emphasising
+    # a skip over a creation gets the hierarchy backwards.
     RED = "\033[0;31m"
-    GREEN = "\033[0;32m"
-    YELLOW = "\033[0;33m"
-    CYAN = "\033[0;36m"
+    GREEN = "\033[38;5;78m"
+    YELLOW = "\033[38;5;222m"
+    CYAN = "\033[38;5;80m"
+    PINK = "\033[38;5;211m"
     DIM = "\033[2m"
     NC = "\033[0m"
 
     @classmethod
     def disable(cls):
-        cls.RED = cls.GREEN = cls.YELLOW = cls.CYAN = cls.DIM = cls.NC = ""
+        cls.RED = cls.GREEN = cls.YELLOW = cls.CYAN = cls.PINK = cls.DIM = cls.NC = ""
 
 
 C = _Colors
@@ -79,9 +83,9 @@ def _render_report(report: WorktreeReport) -> None:
     elif report.result == WorktreeResult.SKIPPED_UP_TO_DATE:
         print(f"{C.YELLOW}skip{C.NC}   {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.DELETED:
-        print(f"{C.GREEN}delete{C.NC} {label} -> {dest}")
+        print(f"{C.PINK}delete{C.NC} {label} -> {dest}")
     elif report.result == WorktreeResult.DELETED_BRANCH:
-        print(f"{C.GREEN}delete{C.NC} {label} branch '{report.branch}' "
+        print(f"{C.PINK}delete{C.NC} {label} branch '{report.branch}' "
               f"{C.DIM}(--keep-branch keeps it){C.NC}")
     elif report.result == WorktreeResult.FAILED:
         if is_tty:
