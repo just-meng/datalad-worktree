@@ -145,3 +145,30 @@ runs
 ```
 
 A worktree directory deleted by other means (`rm -rf`) is pruned first, so it doesn't appear.
+
+## `worktree <branch>`
+
+```
+worktree <branch>
+
+  <branch>                  branch whose worktree path to print
+```
+
+Prints the path of the worktree checking out `branch`, and nothing else, for use with `cd`. Standalone CLI only.
+
+```fish
+cd (worktree runs)          # into the runs worktree
+cd (worktree master)        # back to the main checkout
+```
+
+- It works from anywhere inside a dataset, main checkout or worktree. The lookup starts at the innermost dataset around the current directory, so from inside `code` it prints the `code` worktree, not the top of the hierarchy.
+- A dataset with no worktree on `branch` is passed over for the dataset that contains it.
+- The main checkout counts, so its branch leads back home.
+- With no worktree on `branch`, it prints an error to stderr, nothing to stdout, and exits 1.
+- A branch named `add`, `fetch`, `delete` or `list` runs that command instead.
+
+An empty result is not an error to `cd` itself: fish's `cd` with no argument goes to `$HOME`, and bash's `cd ""` stays put. To stop on a failed lookup, use a function:
+
+```fish
+function wcd; set -l p (worktree $argv); and cd $p; end
+```

@@ -73,9 +73,10 @@ worktree add <branch> <worktree-path>   # create nested worktrees
 worktree fetch [target]                 # bring commits and mtimes into the checkout you stand in
 worktree delete <target>                # remove worktrees, deepest-first
 worktree list                           # show worktrees across the hierarchy (also the default)
+worktree <branch>                       # print the worktree's path: cd (worktree runs)
 ```
 
-Installed as a DataLad extension — that is, into the same environment as DataLad, as above — each one is also available as `datalad worktree-add`, `worktree-list`, `worktree-delete`, `worktree-fetch`. Installed standalone, only the `worktree` command exists.
+Installed as a DataLad extension — that is, into the same environment as DataLad, as above — each of the first four is also available as `datalad worktree-add`, `worktree-list`, `worktree-delete`, `worktree-fetch`. Installed standalone, only the `worktree` command exists.
 
 Flags and behaviour: [docs/cli.md](docs/cli.md). Why it works the way it does: [docs/design.md](docs/design.md).
 

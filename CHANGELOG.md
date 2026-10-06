@@ -2,6 +2,12 @@
 
 User-facing changes per release. Behaviour is documented in [docs/cli.md](docs/cli.md).
 
+## Unreleased
+
+### Added
+
+- `worktree <branch>` prints the path of the worktree on `branch`, so `cd (worktree runs)` gets you there.
+
 ## 0.4.0 (2026-10-05)
 
 ### Breaking
