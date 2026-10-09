@@ -6,6 +6,7 @@ Can be invoked as:
   - ``worktree`` or ``worktree list``
   - ``worktree delete <path-or-branch>``
   - ``worktree fetch [path-or-branch]``
+  - ``worktree <branch>`` (print that worktree's path)
   - ``python -m datalad_worktree ...``
 """
 
@@ -102,6 +103,9 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog="worktree",
         description="Manage nested git worktrees for DataLad dataset hierarchies.",
+        epilog="worktree <branch> prints the path of the worktree on <branch>, "
+               "in the innermost repo around the current directory, "
+               "e.g. cd (worktree runs).",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -402,15 +406,38 @@ def _cmd_delete(args) -> int:
     return 1 if any(r.result == WorktreeResult.FAILED for r in reports) else 0
 
 
+def _cmd_path(branch: str) -> int:
+    from datalad_worktree.path_cmd import find_worktree_path
+
+    # Only the path goes to stdout, so `cd (worktree runs)` gets nothing
+    # else; the error goes to stderr with a non-zero exit.
+    try:
+        print(find_worktree_path(branch, Path.cwd()))
+    except ValueError as e:
+        print(f"{C.RED}error{C.NC}  {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
+
+SUBCOMMANDS = frozenset({"add", "list", "fetch", "delete"})
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    if argv is None:
+        argv = sys.argv[1:]
 
     if not sys.stdout.isatty():
         _Colors.disable()
+
+    # `worktree <branch>`: a lone word that names no subcommand is a branch.
+    # A branch named like a subcommand runs that subcommand instead.
+    if len(argv) == 1 and not argv[0].startswith("-") and argv[0] not in SUBCOMMANDS:
+        return _cmd_path(argv[0])
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     if args.command is None:
         args.dataset = None
