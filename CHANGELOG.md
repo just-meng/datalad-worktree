@@ -13,6 +13,10 @@ User-facing changes per release. Behaviour is documented in [docs/cli.md](docs/c
 
 - A directory's mtime is copied only if no tracked file inside it differs between the two sides.
 
+### Fixed
+
+- `add` repairs annexed files that would otherwise be broken links in the new worktree, when the dataset has lost git-annex's hooks and attributes, and says to run `git annex init` there.
+
 ## 0.4.0 (2026-10-05)
 
 ### Breaking

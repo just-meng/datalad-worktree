@@ -5,6 +5,9 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import pytest
+from datalad.distribution.dataset import Dataset
+
 
 from datalad_worktree.add import (
     create_nested_worktrees,
@@ -85,6 +88,53 @@ class TestCreateNestedWorktrees:
         assert _all_ok(reports)
         skipped = [r for r in reports if r.dataset_path == "sub-02"]
         assert skipped[0].result == WorktreeResult.SKIPPED_NOT_INSTALLED
+
+    @pytest.mark.requires_review
+    @pytest.mark.parametrize("annex_setup", ["intact", "hooks and attributes lost"])
+    def test_annexed_files_resolve_even_if_git_annex_does_not_run(
+        self, superds: dict, annex_setup: str,
+    ):
+        """A dataset that lost git-annex's hooks and attributes still gets working links.
+
+        Without the post-checkout hook and the ``* filter=annex`` attribute,
+        checkout never runs git-annex in the new worktree, so ``.git`` stays a
+        gitfile and every annex symlink through it is broken. The repair is
+        reported only where it was needed.
+        """
+        datasets = (".", "sub-01", "sub-01/derivatives", "sub-02")
+        annexed = ("sub-02/data.txt", "sub-01/derivatives/data.txt")
+        Dataset(str(superds["super"])).get(
+            [str(superds["super"] / f) for f in annexed],
+            result_renderer="disabled",
+        )
+        assert all((superds["super"] / f).exists() for f in annexed)
+        lost = annex_setup != "intact"
+        if lost:
+            for rel in datasets:
+                for git_path in ("hooks", "info/attributes"):
+                    path = Path(_git(
+                        superds["super"] / rel,
+                        "rev-parse", "--path-format=absolute", "--git-path", git_path,
+                    ).stdout.strip())
+                    shutil.rmtree(path) if path.is_dir() else path.write_text("")
+
+        wt_root = superds["wt_location"] / "test-wt"
+        reports = _run_create(
+            superds_path=superds["super"],
+            worktree_path=wt_root,
+            branch="feat/annex",
+            preserve_mtimes=False,
+        )
+
+        assert _all_ok(reports)
+        for f in annexed:
+            assert (wt_root / f).is_symlink(), f
+            assert (wt_root / f).exists(), f
+        repaired = {
+            r.dataset_path for r in reports
+            if r.result == WorktreeResult.ANNEX_REPAIRED
+        }
+        assert repaired == (set(datasets) if lost else set())
 
 # ── Replacing an existing worktree ───────────────────────────────────────────
 

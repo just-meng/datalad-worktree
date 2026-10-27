@@ -74,6 +74,91 @@ def _git_worktree_add(
     return (WorktreeResult.CREATED, "")
 
 
+def _repair_annex_layout(
+    dataset_path: str,
+    source: Path,
+    worktree: Path,
+    branch: str,
+) -> Iterator[WorktreeReport]:
+    """
+    Make a new worktree's annexed files reachable if git-annex's hook did not.
+
+    In a linked worktree ``.git`` is a gitfile -- ``gitdir: <path>``, which
+    only git follows. git-annex's locked files are relative symlinks into
+    ``.git/annex/objects``, which the kernel resolves, and it cannot resolve
+    a path through a file. git-annex repairs this whenever one of its
+    commands starts in the worktree: ``.git`` becomes a symlink to the gitdir,
+    which gets an ``annex -> <common dir>/annex`` link. ``git worktree add``
+    normally starts one twice over, both installed by ``git annex init``:
+    ``git-annex filter-process`` for every regular file the ``* filter=annex``
+    attribute covers, and the ``post-checkout`` hook, ``git annex smudge
+    --update``. Without both, every annexed file in the worktree is a broken
+    link, and every unlocked one is still its pointer text. Snakemake reads
+    both as missing outputs.
+
+    Found on a dataset that had kept its ``[filter "annex"]`` config but lost
+    ``.git/hooks/`` and the ``* filter=annex`` line of ``.git/info/attributes``.
+    Its worktree asked to regenerate 68 up-to-date outputs. In every
+    worktree of a healthy dataset ``.git`` had become a symlink within a
+    second of creation. In a scratch repository with a regular file,
+    removing the hooks alone left worktrees working, and removing the
+    attribute as well broke them.
+
+    The check is on the outcome, whether ``.git/annex`` resolves, not on
+    the hook file or the attribute. Hooks can also live under
+    ``core.hooksPath``, or fail, and the filter only runs if a regular file
+    is checked out. The
+    repair runs the hook's own command, so the worktree ends up as the hook
+    would have left it, unlocked content included. It is reported rather
+    than done silently, because the cause sits in the source dataset and
+    only ``git annex init`` there fixes it. That restores the hooks and the
+    attribute, whose absence also affects the main checkout.
+
+    Skipped for datasets without git-annex, and where ``core.symlinks`` is
+    false: git-annex leaves ``.git`` a file there, and annexed files are
+    unlocked rather than symlinks.
+    """
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(worktree), *args], capture_output=True, text=True,
+        )
+
+    if git("config", "--get", "annex.version").returncode != 0:
+        return
+    if git("config", "--type=bool", "core.symlinks").stdout.strip() == "false":
+        return
+    if (worktree / ".git" / "annex").is_dir():
+        return
+
+    def report(result: WorktreeResult, message: str) -> WorktreeReport:
+        return WorktreeReport(
+            dataset_path=dataset_path,
+            source=source,
+            destination=worktree,
+            result=result,
+            branch=branch,
+            message=message,
+        )
+
+    repair = git("annex", "smudge", "--update")
+    if repair.returncode != 0 or not (worktree / ".git" / "annex").is_dir():
+        detail = repair.stderr.strip() or ".git/annex still does not resolve"
+        yield report(
+            WorktreeResult.FAILED,
+            f"annexed files are unreachable (git-annex did not run during "
+            f"checkout, and running its post-checkout hook here failed: "
+            f"{detail}); try `git annex init` in {source}",
+        )
+        return
+
+    yield report(
+        WorktreeResult.ANNEX_REPAIRED,
+        f"git-annex did not run during checkout, so ran `git annex smudge "
+        f"--update`; run `git annex init` in {source} to restore its hooks "
+        f"and attributes",
+    )
+
+
 def _prepare_destination(dest_path: Path) -> None:
     """
     Prepare the destination path for a subdataset worktree.
@@ -579,6 +664,7 @@ def create_nested_worktrees(
             return
 
         created_worktrees.append((".", superds_path, worktree_root))
+        yield from _repair_annex_layout(".", superds_path, worktree_root, branch)
 
     # ── Create subdataset worktrees ──────────────────────────────────────
     for subds in subdatasets:
@@ -651,6 +737,9 @@ def create_nested_worktrees(
             return
 
         created_worktrees.append((subds.rel_path, subds.abs_path, dest_subds))
+        yield from _repair_annex_layout(
+            subds.rel_path, subds.abs_path, dest_subds, branch,
+        )
 
     # ── Configure container bind mounts ──────────────────────────────────
     # Only the superdataset. A container registered in a *subdataset* is not
