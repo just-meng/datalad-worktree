@@ -23,8 +23,8 @@ worktree add <branch> <worktree-path> [options]
                             check each subdataset out at the commit its parent
                             records; with a commit or tag, the superdataset too
   --no-bindpaths            don't configure container bind mounts
-  --no-mtimes               don't copy mtimes (Snakemake markers included)
-                            from the main checkout
+  --no-mtimes               don't copy mtimes (Snakemake markers and
+                            records included) from the main checkout
   -d, --dataset <path>      superdataset root (default: current directory)
 ```
 
@@ -68,7 +68,7 @@ worktree add rerun /tmp/wt --follow-parent v1.0     # as commit or tag v1.0 reco
 The last two steps run over all the worktrees at once:
 
 - **Container bind mounts** are configured for containers registered in the superdataset. Containers registered in a subdataset are not configured. `--no-bindpaths` skips this step.
-- **mtimes are copied from the main checkout,** Snakemake's `.snakemake_timestamp` markers included. `--no-mtimes` skips this step.
+- **mtimes are copied from the main checkout,** Snakemake's `.snakemake_timestamp` markers and `.snakemake/metadata/` records included. `--no-mtimes` skips this step.
 
 ## `worktree fetch`
 
@@ -79,8 +79,8 @@ worktree fetch [target] [options]
                             (default: the checkout this worktree came from)
 
   -n, --dry-run             show what would be merged, refusals included
-  --no-mtimes               don't copy mtimes (Snakemake markers included)
-                            from the target
+  --no-mtimes               don't copy mtimes (Snakemake markers and
+                            records included) from the target
   -d, --dataset <path>      checkout to fetch into (default: current directory)
 ```
 

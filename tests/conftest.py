@@ -114,3 +114,37 @@ def superds(tmp_path: Path) -> dict:
         "sub02": superds.pathobj / "sub-02",
         "wt_location": tmp_path / "worktrees",
     }
+
+
+@pytest.fixture()
+def snakemake_record():
+    """
+    Write a Snakemake provenance record the way its file backend does.
+
+    Mirrors ``FilePersistence._record_path`` independently of the code under
+    test: the urlsafe-base64 output path, split into ``@``-prefixed parent
+    directories past the filesystem's name limit. Returns the writer
+    ``(root, key, payload, incomplete=False) -> record path``.
+    """
+    import base64
+    import json
+    import os
+
+    def encode(root: Path, subdir: str, key: str) -> Path:
+        max_len = os.pathconf(root, "PC_NAME_MAX") if os.name == "posix" else 255
+        b64 = base64.urlsafe_b64encode(key.encode()).decode()
+        chunks = [b64[i:i + max_len - 1] for i in range(0, len(b64), max_len - 1)]
+        chunks = ["@" + c for c in chunks[:-1]] + [chunks[-1]]
+        return root / ".snakemake" / subdir / Path(*chunks)
+
+    def write(root: Path, key: str, payload: str, incomplete: bool = False) -> Path:
+        record = encode(root, "metadata", key)
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps({"rule": "r", "code": payload}))
+        if incomplete:
+            marker = encode(root, "incomplete", key)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps({"external_jobid": None}))
+        return record
+
+    return write

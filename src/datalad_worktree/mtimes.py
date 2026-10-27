@@ -29,7 +29,9 @@ Three properties keep it safe:
   object store that the point above is careful to protect.
 
 Snakemake's ``.snakemake_timestamp`` marker is carried along with the
-directory it sits in, although it is untracked; see ``_copy_marker``.
+directory it sits in, although it is untracked; see ``_timestamp_markers``.
+So are Snakemake's provenance records; see ``_snakemake_records``. All of it
+is carried only for paths both sides provably share; see ``shared_paths``.
 
 Reconstructing mtimes from commit dates (the ``git-restore-mtime`` approach)
 is deliberately not used: these repositories are routinely rewritten by
@@ -40,8 +42,11 @@ See https://blog.datalad.org/posts/snakemake-datalad-worktree/
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 import os
+import shutil
 import subprocess
 from collections.abc import Iterable, Iterator
 from pathlib import Path, PurePosixPath
@@ -73,8 +78,14 @@ _POINTER_MAX_BYTES = 1024
 # `status --porcelain` index codes that carry a second, NUL-separated path.
 _TWO_PATH_CODES = frozenset({"R", "C"})
 
-# Where Snakemake keeps a directory() output's mtime; see `_copy_marker`.
+# Where Snakemake keeps a directory() output's mtime; see `_timestamp_markers`.
 SNAKEMAKE_TIMESTAMP = ".snakemake_timestamp"
+
+# Snakemake's per-output provenance records and the markers of jobs that
+# started but never finished, relative to the directory it was run from; see
+# `_snakemake_records`.
+SNAKEMAKE_METADATA = Path(".snakemake", "metadata")
+SNAKEMAKE_INCOMPLETE = Path(".snakemake", "incomplete")
 
 
 def _git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
@@ -291,7 +302,7 @@ def parent_dirs(paths: Iterable[str]) -> list[str]:
     return sorted(dirs, key=lambda d: (d.count("/"), d), reverse=True)
 
 
-def _copy_one(source: Path, target: Path) -> bool:
+def _stamp(source: Path, target: Path) -> bool:
     """
     Copy one path's atime/mtime. Returns whether it happened.
 
@@ -311,53 +322,107 @@ def _copy_one(source: Path, target: Path) -> bool:
     return True
 
 
-def _copy_marker(reference_dir: Path, target_dir: Path) -> bool:
+def _copy(source: Path, target: Path) -> bool:
+    """Copy one untracked file, mtime included. Returns whether it happened."""
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target, follow_symlinks=False)
+    except OSError as error:
+        logger.debug("Could not copy %s -> %s: %s", source, target, error)
+        return False
+    return True
+
+
+def _timestamp_markers(reference: Path, dirs: list[str]) -> list[str]:
     """
-    Carry Snakemake's ``.snakemake_timestamp`` from one directory to another.
+    Snakemake's ``.snakemake_timestamp`` markers in the shared directories.
 
     For a ``directory()`` output Snakemake reads this file's mtime instead of
     the directory's own whenever the file exists, and ``snakemake --touch``
     stamps only the file. It is conventionally gitignored, so a worktree never
     has it: Snakemake there falls back to the directory mtime, which ``--touch``
     never moved, and reruns a job the reference considers up to date.
-
-    Creating the file moves ``target_dir``'s own mtime, so this must run before
-    that directory is stamped.
     """
-    source = reference_dir / SNAKEMAKE_TIMESTAMP
-    if not source.is_file():
-        return False
-    target = target_dir / SNAKEMAKE_TIMESTAMP
+    return [
+        f"{d}/{SNAKEMAKE_TIMESTAMP}" for d in dirs
+        if (reference / d / SNAKEMAKE_TIMESTAMP).is_file()
+    ]
+
+
+def _record_key(record: Path, records_dir: Path) -> str | None:
+    """
+    The output path a Snakemake record file is about, or ``None``.
+
+    Snakemake names the file after the urlsafe-base64 output path, split into
+    ``@``-prefixed parent directories when that exceeds the filesystem's name
+    limit (``FilePersistence._record_path``).
+    """
+    encoded = "".join(
+        part.removeprefix("@") for part in record.relative_to(records_dir).parts
+    )
     try:
-        target.touch()
-    except OSError as error:
-        logger.debug("Could not create %s: %s", target, error)
-        return False
-    return _copy_one(source, target)
+        return base64.urlsafe_b64decode(encoded).decode()
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
 
 
-def copy_mtimes(reference: Path, worktree: Path) -> tuple[int, int, str]:
+def _snakemake_records(reference: Path, worktree: Path, shared: set[str]) -> list[str]:
     """
-    Copy mtimes from a working tree to a worktree made from it.
+    Snakemake's provenance records for the shared outputs.
 
-    Returns ``(files, dirs, error_message)``. A non-empty error message
-    means nothing was copied.
+    Besides mtimes, Snakemake reruns a job when the code, input set or params
+    stored in its output's record differ from the current rule. Git does not
+    carry ``.snakemake/metadata/``, so each checkout keeps the record of its
+    *own* last run: in the reported case, 17 fetched jobs whose outputs were
+    newer than all their inputs reran for "code has changed since last
+    execution". Outputs marked incomplete on either side are left out. Only
+    Snakemake's default file backend is read, run from the dataset root.
+    """
+    records_dir = reference / SNAKEMAKE_METADATA
+    selected: list[str] = []
+    for record in records_dir.rglob("*"):
+        key = _record_key(record, records_dir) if record.is_file() else None
+        if key is None or key.rstrip("/") not in shared:
+            continue
+        relative = record.relative_to(records_dir)
+        if any((side / SNAKEMAKE_INCOMPLETE / relative).exists()
+               for side in (reference, worktree)):
+            continue
+        selected.append(str(SNAKEMAKE_METADATA / relative))
+    return selected
+
+
+def copy_mtimes(reference: Path, worktree: Path) -> dict[str, int]:
+    """
+    Carry the state a make-style pipeline reads from one working tree to another.
+
+    Every kind -- file and directory mtimes, timestamp markers, provenance
+    records -- is carried only for ``shared_paths``. Returns how many of each
+    were carried. Order matters: creating a marker or a record moves its
+    parent directory's mtime, so directories are stamped last.
+
+    Raises
+    ------
+    OSError
+        If ``os.utime`` cannot leave symlinks alone on this platform.
+        Degrading to following them would silently rewrite the shared annex
+        object store.
     """
     if os.utime not in os.supports_follow_symlinks:
-        # Degrading to follow_symlinks=True would silently rewrite the
-        # shared annex object store, so refuse instead.
-        return 0, 0, "os.utime does not support follow_symlinks on this platform"
+        raise OSError("os.utime does not support follow_symlinks on this platform")
 
     files, dirs = shared_paths(reference, worktree)
-
-    copied_files = sum(_copy_one(reference / path, worktree / path) for path in files)
-    # Files first: directories inherit whatever the reference says, and
-    # stamping a child never disturbs the parent we already set.
-    copied_dirs = 0
-    for path in dirs:
-        _copy_marker(reference / path, worktree / path)
-        copied_dirs += _copy_one(reference / path, worktree / path)
-    return copied_files, copied_dirs, ""
+    steps = [
+        ("snakemake records", _copy,
+         _snakemake_records(reference, worktree, {*files, *dirs})),
+        ("markers", _copy, _timestamp_markers(reference, dirs)),
+        ("files", _stamp, files),
+        ("dirs", _stamp, dirs),
+    ]
+    return {
+        name: sum(carry(reference / path, worktree / path) for path in paths)
+        for name, carry, paths in steps
+    }
 
 
 def sync_dataset(
@@ -366,9 +431,7 @@ def sync_dataset(
     worktree_path: Path,
     branch: str,
 ) -> Iterator[WorktreeReport]:
-    """Copy mtimes into one freshly created worktree and report the result."""
-    files, dirs, error = copy_mtimes(source, worktree_path)
-
+    """Copy mtimes into one working tree and report the result."""
     def report(result: WorktreeResult, message: str) -> WorktreeReport:
         return WorktreeReport(
             dataset_path=dataset_path,
@@ -379,14 +442,15 @@ def sync_dataset(
             message=message,
         )
 
-    if error:
-        yield report(WorktreeResult.FAILED, error)
+    try:
+        counts = copy_mtimes(source, worktree_path)
+    except OSError as error:
+        yield report(WorktreeResult.FAILED, str(error))
         return
 
-    yield report(
-        WorktreeResult.MTIMES_SYNCED,
-        f"{files} files, {dirs} dirs from {source}",
-    )
+    shown = ", ".join(f"{n} {name}" for name, n in counts.items()
+                      if n or name in ("files", "dirs"))
+    yield report(WorktreeResult.MTIMES_SYNCED, f"{shown} from {source}")
 
 
 def main_working_tree(worktree_path: Path) -> Path | None:
