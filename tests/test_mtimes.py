@@ -254,6 +254,27 @@ class TestSafety:
         assert os.lstat(worktree / "results" / "table.csv").st_mtime_ns == \
             OUTPUT_MTIME_NS
 
+    @pytest.mark.requires_review
+    def test_directory_with_a_differing_file_keeps_its_mtime(self, pipeline_ds: dict):
+        """
+        A directory() output is judged by the directory alone, so its stamp
+        vouches for everything inside -- one differing file voids it.
+        """
+        superds = pipeline_ds["super"]
+        _git(superds, "checkout", "-q", "-b", "variant")
+        (superds / "results" / "extra.csv").write_text("only on variant\n")
+        Dataset(str(superds)).save(message="diverge", result_renderer="disabled")
+        _git(superds, "checkout", "-q", "master")
+        _set_mtime(superds / "results", OUTPUT_MTIME_NS)
+
+        worktree = _add(pipeline_ds, "wt", "wt-variant",
+                        follow_parent=True, at_commit="variant")
+
+        assert os.lstat(worktree / "results").st_mtime_ns != OUTPUT_MTIME_NS
+        # the identical file inside is still carried
+        assert os.lstat(worktree / "results" / "table.csv").st_mtime_ns == \
+            OUTPUT_MTIME_NS
+
     def test_dirty_reference_file_is_skipped(self, pipeline_ds: dict):
         """A modified file's mtime describes content the worktree lacks."""
         superds = pipeline_ds["super"]

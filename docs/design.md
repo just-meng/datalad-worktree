@@ -27,7 +27,7 @@ So mtimes are copied from the other working tree: main → worktree on `add`, wo
 
 What keeps it safe:
 
-- **Match on blob OID, not path,** so only byte-identical content inherits a timestamp. Skip paths dirty on either side.
+- **Match on blob OID, not path,** so only byte-identical content inherits a timestamp. Skip paths dirty on either side. A directory is carried only if nothing tracked inside it differs, since Snakemake judges a `directory()` output by the directory alone.
 - **Never follow symlinks.** Annexed files point into an object store shared with the main repository.
 - **Skip unlocked annexed files.** Restamping one forces a re-hash through git-annex's clean filter: stamping 10099 symlinks cost the next `git status` 0.11 s, stamping 28 unlocked files (3.71 GB) cost it **152 s**.
 - **No mtimes from commit dates** (the `git-restore-mtime` approach). jj squash and rebase rewrite these repositories routinely, so every file would look new.

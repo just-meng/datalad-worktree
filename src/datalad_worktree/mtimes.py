@@ -239,23 +239,29 @@ def dirty_paths(repo_path: Path) -> set[str]:
     return dirty
 
 
-def transferable_paths(reference: Path, worktree: Path) -> list[str]:
+def shared_paths(reference: Path, worktree: Path) -> tuple[list[str], list[str]]:
     """
-    Paths whose mtime can be carried from ``reference`` to ``worktree``.
+    ``(files, dirs)`` whose state can be carried from ``reference`` to ``worktree``.
 
-    A path qualifies when it is tracked in both, holds the identical blob in
+    A file qualifies when it is tracked in both, holds the identical blob in
     both, is clean on *both* sides, and is not an unlocked annexed file.
 
     Both sides have to be clean because a dirty path's mtime describes
     content that side's HEAD does not have. In the reference that would
     export a timestamp for content the target never received; in the target
     it would overwrite the timestamp of uncommitted local work with one that
-    claims the reference's content. ``worktree update`` ships into a
-    checkout that is allowed to be dirty, so the second case is routine.
+    claims the reference's content. ``worktree fetch`` ships into a checkout
+    that is allowed to be dirty, so the second case is routine.
+
+    A directory qualifies when it holds a qualifying file and no tracked file
+    that does not -- because Snakemake judges a ``directory()`` output by the
+    directory alone, so its state vouches for everything inside. Directories
+    are listed deepest first, and the root is excluded: it holds a ``.git``
+    file and subdataset mounts the reference root does not.
     """
     ref_entries = _tracked_entries(reference)
     if not ref_entries:
-        return []
+        return [], []
 
     ref_blobs = {path: oid for _mode, oid, _size, path in ref_entries}
     wt_blobs = tracked_blobs(worktree)
@@ -263,24 +269,19 @@ def transferable_paths(reference: Path, worktree: Path) -> list[str]:
     # Same blob on both sides, so the reference's lock state is the worktree's.
     unlocked = _unlocked_from_entries(reference, ref_entries)
 
-    return sorted(
+    identical = {
         path for path, oid in ref_blobs.items()
-        if path not in dirty
-        and path not in unlocked
-        and wt_blobs.get(path) == oid
-    )
+        if path not in dirty and wt_blobs.get(path) == oid
+    }
+    files = sorted(identical - unlocked)
+    # An unlocked file is skipped for cost, not because it differs.
+    tainted = set(parent_dirs((ref_blobs.keys() | wt_blobs.keys()) - identical))
+    dirs = [d for d in parent_dirs(identical) if d not in tainted]
+    return files, dirs
 
 
 def parent_dirs(paths: Iterable[str]) -> list[str]:
-    """
-    Every directory containing one of ``paths``, deepest first.
-
-    Snakemake supports ``directory()`` outputs, whose staleness is read off
-    the directory's own mtime, so directories need the same treatment as
-    files. The worktree root is excluded: it holds a ``.git`` file and
-    subdataset mounts that the reference root does not, so its mtime is not
-    a property the two trees share.
-    """
+    """Every directory containing one of ``paths``, deepest first, root excluded."""
     dirs: set[str] = set()
     for path in paths:
         parent = PurePosixPath(path).parent
@@ -347,16 +348,16 @@ def copy_mtimes(reference: Path, worktree: Path) -> tuple[int, int, str]:
         # shared annex object store, so refuse instead.
         return 0, 0, "os.utime does not support follow_symlinks on this platform"
 
-    paths = transferable_paths(reference, worktree)
+    files, dirs = shared_paths(reference, worktree)
 
-    files = sum(_copy_one(reference / path, worktree / path) for path in paths)
+    copied_files = sum(_copy_one(reference / path, worktree / path) for path in files)
     # Files first: directories inherit whatever the reference says, and
     # stamping a child never disturbs the parent we already set.
-    dirs = 0
-    for path in parent_dirs(paths):
+    copied_dirs = 0
+    for path in dirs:
         _copy_marker(reference / path, worktree / path)
-        dirs += _copy_one(reference / path, worktree / path)
-    return files, dirs, ""
+        copied_dirs += _copy_one(reference / path, worktree / path)
+    return copied_files, copied_dirs, ""
 
 
 def sync_dataset(

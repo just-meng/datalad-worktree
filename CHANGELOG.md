@@ -8,6 +8,10 @@ User-facing changes per release. Behaviour is documented in [docs/cli.md](docs/c
 
 - `worktree <branch>` prints the path of the worktree on `branch`, so `cd (worktree runs)` gets you there.
 
+### Changed
+
+- A directory's mtime is copied only if no tracked file inside it differs between the two sides.
+
 ## 0.4.0 (2026-10-05)
 
 ### Breaking
