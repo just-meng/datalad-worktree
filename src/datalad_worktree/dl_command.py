@@ -66,6 +66,11 @@ try:
                     ac.color_word("mtimes", ac.CYAN),
                     label, res.get("message", ""),
                 ))
+            elif res.get("annex_repaired"):
+                ui.message("{}  {} ({})".format(
+                    ac.color_word("annex", ac.YELLOW),
+                    label, res.get("message", ""),
+                ))
             elif status == "ok":
                 ui.message("{} {} -> {}".format(
                     ac.color_word("create", ac.GREEN),
@@ -103,7 +108,8 @@ try:
                     worktree_root = res["worktree_root"]
                 if res.get("dry_run"):
                     is_dry_run = True
-                if res.get("container") or res.get("mtimes"):
+                if (res.get("container") or res.get("mtimes")
+                        or res.get("annex_repaired")):
                     continue  # not a worktree, don't count it as one
                 if res.get("status") == "ok":
                     created += 1
@@ -228,6 +234,7 @@ try:
                     WorktreeResult.CREATED,
                     WorktreeResult.CONFIGURED,
                     WorktreeResult.MTIMES_SYNCED,
+                    WorktreeResult.ANNEX_REPAIRED,
                 ):
                     status = "ok"
                 elif report.result in SKIPPED_RESULTS:
@@ -256,6 +263,7 @@ try:
                     dry_run=report.result == WorktreeResult.SKIPPED_DRY_RUN,
                     container_config=report.result == WorktreeResult.CONFIGURED,
                     mtimes=report.result == WorktreeResult.MTIMES_SYNCED,
+                    annex_repaired=report.result == WorktreeResult.ANNEX_REPAIRED,
                     container=report.result in (
                         WorktreeResult.CONFIGURED,
                         WorktreeResult.SKIPPED_CONTAINER,

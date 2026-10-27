@@ -30,6 +30,7 @@ class WorktreeResult(Enum):
     SKIPPED_UP_TO_DATE = auto()    # fetch: nothing in the worktree to bring in
     CONFIGURED = auto()            # add: container bind-mount config written
     MTIMES_SYNCED = auto()         # add: mtimes copied from the source working tree
+    ANNEX_REPAIRED = auto()        # add: ran git-annex's post-checkout hook in its place
     FETCHED = auto()               # fetch: a worktree's commits brought in
     DELETED = auto()
     DELETED_BRANCH = auto()

@@ -54,6 +54,10 @@ Only once every check has passed is an existing worktree deleted and the new one
 
 `-n` runs the pre-flight and stops, changing nothing. It reports the refusals, or what the real run would do: the worktree it would replace, and for each dataset where its worktree would go and whether `branch` would be new or reset.
 
+#### git-annex in the new worktrees
+
+In a linked worktree, annexed files only resolve once git-annex has run there, which checkout normally makes it do. In a dataset that has lost the hooks and the `* filter=annex` attribute `git annex init` installs, it doesn't. `add` then runs `git annex smudge --update` in the worktree itself and reports it as `annex`, with the dataset to run `git annex init` in to restore them.
+
 ### `--follow-parent`
 
 By default each dataset checks out `branch` on its own, so a subdataset lands on its own branch tip. That may not be the commit the superdataset records for it. `--follow-parent` checks each subdataset out at the commit its parent records instead. All subdatasets and only those recorded by the target commit are created in the worktrees.

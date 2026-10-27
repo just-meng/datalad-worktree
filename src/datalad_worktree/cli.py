@@ -77,6 +77,10 @@ def _render_report(report: WorktreeReport) -> None:
         print(f"{C.CYAN}config{C.NC} {label} {C.DIM}({report.message}){C.NC}")
     elif report.result == WorktreeResult.MTIMES_SYNCED:
         print(f"{C.CYAN}mtimes{C.NC} {label} {C.DIM}({report.message}){C.NC}")
+    elif report.result == WorktreeResult.ANNEX_REPAIRED:
+        # Yellow, not cyan: the step succeeded, but the source dataset
+        # needs fixing, and the message says how.
+        print(f"{C.YELLOW}annex{C.NC}  {label} ({report.message})")
     elif report.result == WorktreeResult.FETCHED:
         if is_tty:
             print("\033[2K", end="")
