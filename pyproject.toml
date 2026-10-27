@@ -35,6 +35,9 @@ packages = ["src/datalad_worktree"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "requires_review: written by an AI agent, not yet reviewed by the maintainer",
+]
 
 [tool.ruff]
 target-version = "py311"
