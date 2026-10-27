@@ -7,6 +7,11 @@ User-facing changes per release. Behaviour is documented in [docs/cli.md](docs/c
 ### Added
 
 - `worktree <branch>` prints the path of the worktree on `branch`, so `cd (worktree runs)` gets you there.
+- `add` and `fetch` carry Snakemake's provenance records (`.snakemake/metadata/`) along with mtimes, so a fetched output no longer reruns for "code has changed since last execution".
+
+### Changed
+
+- A directory's mtime is copied only if no tracked file inside it differs between the two sides.
 
 ## 0.4.0 (2026-10-05)
 

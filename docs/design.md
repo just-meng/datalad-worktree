@@ -25,9 +25,12 @@ Snakemake decides what to rerun by mtime, but git carries content, not timestamp
 
 So mtimes are copied from the other working tree: main → worktree on `add`, worktree → main on `fetch`. It covers directories, for `directory()` outputs, and Snakemake's gitignored `.snakemake_timestamp` markers (#39), which Snakemake reads instead of the directory and `snakemake --touch` stamps alone.
 
+Snakemake also reruns a job when the code, input set or params stored in its output's provenance record (`.snakemake/metadata/`) differ from the current rule. Each checkout keeps the records of its own runs, so these are carried too: after one fetch without them, 17 jobs whose outputs were newer than all their inputs reran for "code has changed since last execution".
+
 What keeps it safe:
 
-- **Match on blob OID, not path,** so only byte-identical content inherits a timestamp. Skip paths dirty on either side.
+- **Match on blob OID, not path,** so only byte-identical content inherits a timestamp. Skip paths dirty on either side. A directory, and a record for one, is carried only if nothing tracked inside it differs, since Snakemake judges a `directory()` output by the directory alone.
+- **Skip records of jobs marked incomplete** on either side.
 - **Never follow symlinks.** Annexed files point into an object store shared with the main repository.
 - **Skip unlocked annexed files.** Restamping one forces a re-hash through git-annex's clean filter: stamping 10099 symlinks cost the next `git status` 0.11 s, stamping 28 unlocked files (3.71 GB) cost it **152 s**.
 - **No mtimes from commit dates** (the `git-restore-mtime` approach). jj squash and rebase rewrite these repositories routinely, so every file would look new.

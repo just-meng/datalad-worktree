@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -254,6 +255,27 @@ class TestSafety:
         assert os.lstat(worktree / "results" / "table.csv").st_mtime_ns == \
             OUTPUT_MTIME_NS
 
+    @pytest.mark.requires_review
+    def test_directory_with_a_differing_file_keeps_its_mtime(self, pipeline_ds: dict):
+        """
+        A directory() output is judged by the directory alone, so its stamp
+        vouches for everything inside -- one differing file voids it.
+        """
+        superds = pipeline_ds["super"]
+        _git(superds, "checkout", "-q", "-b", "variant")
+        (superds / "results" / "extra.csv").write_text("only on variant\n")
+        Dataset(str(superds)).save(message="diverge", result_renderer="disabled")
+        _git(superds, "checkout", "-q", "master")
+        _set_mtime(superds / "results", OUTPUT_MTIME_NS)
+
+        worktree = _add(pipeline_ds, "wt", "wt-variant",
+                        follow_parent=True, at_commit="variant")
+
+        assert os.lstat(worktree / "results").st_mtime_ns != OUTPUT_MTIME_NS
+        # the identical file inside is still carried
+        assert os.lstat(worktree / "results" / "table.csv").st_mtime_ns == \
+            OUTPUT_MTIME_NS
+
     def test_dirty_reference_file_is_skipped(self, pipeline_ds: dict):
         """A modified file's mtime describes content the worktree lacks."""
         superds = pipeline_ds["super"]
@@ -287,6 +309,93 @@ class TestSafety:
         # a clean sibling is still carried, so this is not a blanket skip
         assert os.lstat(worktree / "results" / "table.csv").st_mtime_ns == \
             os.lstat(superds / "results" / "table.csv").st_mtime_ns
+
+
+class TestSnakemakeRecords:
+    """
+    Snakemake's provenance records travel with byte-identical outputs.
+
+    The reported case: after `worktree fetch`, 17 jobs whose outputs were
+    newer than all their inputs still reran, for "code has changed since last
+    execution" -- the main checkout's `.snakemake/metadata/` held its own,
+    older records, and only the worktree had the current ones.
+    """
+
+    @pytest.mark.requires_review
+    def test_add_copies_records_of_identical_outputs(
+        self, pipeline_ds: dict, snakemake_record
+    ):
+        """A file output and a directory() output both carry over."""
+        superds = pipeline_ds["super"]
+        records = [snakemake_record(superds, key, "current")
+                   for key in ("out.txt", "results")]
+
+        worktree = _add(pipeline_ds, "wt", "feat/records")
+
+        for record in records:
+            copied = worktree / record.relative_to(superds)
+            assert copied.read_text() == record.read_text()
+
+    @pytest.mark.requires_review
+    def test_no_mtimes_copies_no_records(self, pipeline_ds: dict, snakemake_record):
+        """The negative control: records travel with the mtime step, not alone."""
+        record = snakemake_record(pipeline_ds["super"], "out.txt", "current")
+
+        worktree = _add(pipeline_ds, "wt", "feat/records", preserve_mtimes=False)
+
+        assert not (worktree / record.relative_to(pipeline_ds["super"])).exists()
+
+    @pytest.mark.requires_review
+    def test_record_of_a_differing_output_is_not_copied(
+        self, pipeline_ds: dict, snakemake_record
+    ):
+        """
+        A record must never vouch for content the target does not have.
+
+        For a directory() output one differing file under it is enough, and
+        so is a file that exists on one side only.
+        """
+        superds = pipeline_ds["super"]
+        worktree = _add(pipeline_ds, "wt", "feat/records", preserve_mtimes=False)
+        (worktree / "results" / "extra.csv").write_text("only here\n")
+        Dataset(str(worktree)).save(message="diverge", result_renderer="disabled")
+        stale = snakemake_record(worktree, "results", "stale")
+        snakemake_record(superds, "results", "current")
+        snakemake_record(superds, "out.txt", "current")
+
+        counts = copy_mtimes(superds, worktree)
+
+        assert stale.read_text() == json.dumps({"rule": "r", "code": "stale"})
+        # the identical sibling still travels, so this is not a blanket skip
+        assert counts["snakemake records"] == 1
+
+    @pytest.mark.requires_review
+    def test_incomplete_output_is_not_copied(self, pipeline_ds: dict, snakemake_record):
+        """A job that started and never finished vouches for nothing."""
+        superds = pipeline_ds["super"]
+        record = snakemake_record(superds, "out.txt", "current", incomplete=True)
+
+        worktree = _add(pipeline_ds, "wt", "feat/records")
+
+        assert not (worktree / record.relative_to(superds)).exists()
+
+    @pytest.mark.requires_review
+    def test_long_output_path_split_across_directories(
+        self, pipeline_ds: dict, snakemake_record
+    ):
+        """Past the filesystem's name limit Snakemake nests the encoded key."""
+        superds = pipeline_ds["super"]
+        long_path = Path("a" * 120) / ("b" * 120) / "c.txt"
+        (superds / long_path).parent.mkdir(parents=True)
+        (superds / long_path).write_text("deep\n")
+        Dataset(str(superds)).save(message="deep output", result_renderer="disabled")
+        record = snakemake_record(superds, long_path.as_posix(), "current")
+        assert record.parent.name.startswith("@"), "key was not long enough to split"
+
+        worktree = _add(pipeline_ds, "wt", "feat/records")
+
+        assert (worktree / record.relative_to(superds)).read_text() == \
+            record.read_text()
 
 
 class TestResolveWorktreeTarget:

@@ -174,6 +174,27 @@ class TestFetchRefreshesMtimes:
                     if r.result == WorktreeResult.MTIMES_SYNCED]
 
 
+class TestFetchCarriesSnakemakeRecords:
+    @pytest.mark.requires_review
+    def test_worktree_record_replaces_the_stale_one(
+        self, shipping_ds: dict, snakemake_record
+    ):
+        """
+        The reported case: the main checkout's own older record called a
+        fetched, up-to-date output stale ("code has changed").
+
+        Snakemake runs from the dataset holding the outputs, here `derived/`.
+        """
+        _run_in_worktree(shipping_ds, identical=False)
+        key = "vis/ses-A"
+        stale = snakemake_record(shipping_ds["main"] / "derived", key, "old rule")
+        current = snakemake_record(shipping_ds["wt"] / "derived", key, "new rule")
+
+        _fetch(shipping_ds)
+
+        assert stale.read_text() == current.read_text()
+
+
 class TestShippingIntoADirtyCheckout:
     """
     Unrelated work-in-progress must not block shipping.
